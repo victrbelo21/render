@@ -5,7 +5,7 @@ const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
 const app = express();
 
-// Configuração do CORS para permitir que a interface comunique com a API
+// Configuração do CORS
 app.use(cors());
 app.use(express.json());
 
@@ -24,156 +24,157 @@ cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
 // =====================================================================
-// 2. ROTAS DA API
+// 2. ROTAS DA API (Arquitetura de Documento Único por Usuário)
 // =====================================================================
 
-// ROTA A: Salvar ou ATUALIZAR Palpites dos Jogos (Upsert)
-app.post('/salvar-palpite', async (req, res) => {
+// ROTA A: Salvar Palpites em Lote (Gera/Atualiza apenas 1 documento por pessoa)
+app.post('/salvar-lote', async (req, res) => {
   try {
-    const { user_email, user_name, grupo, data_jogo, horario, time_1, placar_1, time_2, placar_2 } = req.body;
+    const { user_email, user_name, palpites } = req.body;
 
-    // 1. Busca se já existe um palpite deste usuário para este jogo
+    // 1. Busca a cartela única deste usuário
     const searchResponse = await cloudant.postFind({
       db: DB_NAME,
       selector: {
-        type: { "$eq": "palpite" },
-        user_email: { "$eq": user_email },
-        time_1: { "$eq": time_1 },
-        time_2: { "$eq": time_2 }
-      }
-    });
-
-    const existingDoc = searchResponse.result.docs[0];
-
-    // 2. Monta o documento com os dados recebidos
-    const documento = {
-      type: "palpite",
-      user_email,
-      user_name,
-      grupo,
-      data_jogo,
-      horario,
-      time_1,
-      placar_1,
-      time_2,
-      placar_2,
-      timestamp: new Date().toISOString()
-    };
-
-    if (existingDoc) {
-      // 3. Atualiza o documento existente (preserva o ID e a Revisão)
-      documento._id = existingDoc._id;
-      documento._rev = existingDoc._rev;
-
-      await cloudant.putDocument({
-        db: DB_NAME,
-        docId: existingDoc._id,
-        document: documento
-      });
-      
-      res.status(200).json({ success: true, message: "Palpite atualizado", id: existingDoc._id });
-    } else {
-      // 4. Cria um documento novo
-      const response = await cloudant.postDocument({
-        db: DB_NAME,
-        document: documento
-      });
-      
-      res.status(200).json({ success: true, message: "Palpite criado", id: response.result.id });
-    }
-
-  } catch (error) {
-    console.error("Erro na rota /salvar-palpite:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar palpite no servidor' });
-  }
-});
-
-
-// ROTA B: Salvar ou ATUALIZAR Palpite da Final (Upsert)
-app.post('/salvar-final', async (req, res) => {
-  try {
-    const { user_email, vencedor_campeonato, placar_final } = req.body;
-
-    // 1. Busca se o usuário já tem um palpite final registrado
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: {
-        type: { "$eq": "palpite_final" },
+        type: { "$eq": "cartela_usuario" },
         user_email: { "$eq": user_email }
       }
     });
 
     const existingDoc = searchResponse.result.docs[0];
 
-    const documento = {
-      type: "palpite_final",
-      user_email,
-      vencedor_campeonato,
-      placar_final,
-      timestamp: new Date().toISOString()
-    };
-
     if (existingDoc) {
-      // 2. Atualiza o palpite final
-      documento._id = existingDoc._id;
-      documento._rev = existingDoc._rev;
+      // 2. Se a cartela existe, fazemos um MERGE inteligente
+      // Preservamos palpites antigos e atualizamos/adicionamos os novos
+      let palpitesAtuais = existingDoc.palpites_jogos || [];
+
+      palpites.forEach(novoPalpite => {
+        // Tenta achar se esse jogo já estava na cartela
+        const index = palpitesAtuais.findIndex(p => p.time_1 === novoPalpite.time_1 && p.time_2 === novoPalpite.time_2);
+        
+        if (index >= 0) {
+          palpitesAtuais[index] = novoPalpite; // Atualiza o placar se o jogo já existia
+        } else {
+          palpitesAtuais.push(novoPalpite); // Adiciona na cartela se for um jogo novo
+        }
+      });
+
+      existingDoc.palpites_jogos = palpitesAtuais;
+      existingDoc.user_name = user_name; // Garante que o nome visual está atualizado
+      existingDoc.timestamp = new Date().toISOString();
 
       await cloudant.putDocument({
         db: DB_NAME,
         docId: existingDoc._id,
-        document: documento
+        document: existingDoc
       });
-      res.status(200).json({ success: true, message: "Palpite final atualizado", id: existingDoc._id });
+
+      res.status(200).json({ success: true, message: "Cartela atualizada com sucesso" });
     } else {
-      // 3. Cria o palpite final pela primeira vez
-      const response = await cloudant.postDocument({
+      // 3. Se não existe, cria a primeira cartela da pessoa
+      const novoDocumento = {
+        type: "cartela_usuario",
+        user_email: user_email,
+        user_name: user_name,
+        palpites_jogos: palpites,
+        palpite_final: null, // Fica vazio até a pessoa preencher na index
+        timestamp: new Date().toISOString()
+      };
+
+      await cloudant.postDocument({
         db: DB_NAME,
-        document: documento
+        document: novoDocumento
       });
-      res.status(200).json({ success: true, message: "Palpite final criado", id: response.result.id });
+
+      res.status(200).json({ success: true, message: "Cartela criada com sucesso" });
     }
 
   } catch (error) {
-    console.error("Erro na rota /salvar-final:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar palpite final no servidor' });
+    console.error("Erro na rota /salvar-lote:", error);
+    res.status(500).json({ success: false, error: 'Erro ao processar lote no servidor' });
   }
 });
 
 
-// ROTA C: Buscar o Ranking Geral
+// ROTA B: Salvar Palpite da Final (Atualiza a mesma cartela única)
+app.post('/salvar-final', async (req, res) => {
+  try {
+    const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
+
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: {
+        type: { "$eq": "cartela_usuario" },
+        user_email: { "$eq": user_email }
+      }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+
+    const dadosDaFinal = { vencedor_campeonato, placar_final };
+
+    if (existingDoc) {
+      // Atualiza apenas a seção da final na cartela
+      existingDoc.palpite_final = dadosDaFinal;
+      existingDoc.timestamp = new Date().toISOString();
+
+      await cloudant.putDocument({
+        db: DB_NAME,
+        docId: existingDoc._id,
+        document: existingDoc
+      });
+      res.status(200).json({ success: true, message: "Final adicionada à cartela" });
+    } else {
+      // Se ele deu o palpite final antes mesmo de palpitar nos jogos base
+      const novoDocumento = {
+        type: "cartela_usuario",
+        user_email: user_email,
+        user_name: user_name || user_email.split('@')[0],
+        palpites_jogos: [], // Arrays de jogos vazia por enquanto
+        palpite_final: dadosDaFinal,
+        timestamp: new Date().toISOString()
+      };
+
+      await cloudant.postDocument({
+        db: DB_NAME,
+        document: novoDocumento
+      });
+      res.status(200).json({ success: true, message: "Cartela criada via final" });
+    }
+
+  } catch (error) {
+    console.error("Erro na rota /salvar-final:", error);
+    res.status(500).json({ success: false, error: 'Erro ao processar palpite final' });
+  }
+});
+
+
+// ROTA C: Buscar o Ranking Geral (Lendo as Cartelas Únicas)
 app.get('/ranking', async (req, res) => {
   try {
     const response = await cloudant.postFind({
       db: DB_NAME,
       selector: {
-        type: { "$eq": "palpite" }
+        type: { "$eq": "cartela_usuario" } // Procura apenas pelas cartelas mestres
       },
       limit: 2000
     });
 
-    const todosPalpites = response.result.docs;
-    const usuarios = {};
+    const cartelas = response.result.docs;
 
-    todosPalpites.forEach(palpite => {
-      const email = palpite.user_email || 'anonimo@bolao.com';
-      const nomeReal = palpite.user_name || email.split('@')[0].replace('.', ' ');
-      
-      if (!usuarios[email]) {
-        usuarios[email] = {
-          email: email,
-          nome: nomeReal, 
-          pontos: 0, 
-          totalPalpites: 0
-        };
-      }
-      
-      usuarios[email].totalPalpites += 1;
+    // Transforma as cartelas na lista de pontuação
+    const rankingArray = cartelas.map(cartela => {
+      return {
+        email: cartela.user_email,
+        nome: cartela.user_name,
+        pontos: 0, // Regra a ser implementada na Copa
+        totalPalpites: cartela.palpites_jogos ? cartela.palpites_jogos.length : 0
+      };
     });
 
-    const rankingArray = Object.values(usuarios).sort((a, b) => {
-      if (b.pontos !== a.pontos) {
-        return b.pontos - a.pontos;
-      }
+    // Ordena: Pontos primeiro, depois quem deu mais palpites
+    rankingArray.sort((a, b) => {
+      if (b.pontos !== a.pontos) return b.pontos - a.pontos;
       return b.totalPalpites - a.totalPalpites;
     });
 
