@@ -5,14 +5,14 @@ const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
 const app = express();
 
-// Configuração do CORS para permitir que o teu site aceda a esta API
+// Configuração do CORS para permitir que o seu site converse com essa API
 app.use(cors());
 app.use(express.json());
 
 // =====================================================================
 // 1. AUTENTICAÇÃO COM A IBM CLOUD (O Cofre)
 // =====================================================================
-// Estas variáveis são puxadas automaticamente das Environment Variables do Render
+// Essas variáveis são puxadas automaticamente do painel do Render
 const authenticator = new IamAuthenticator({
   apikey: process.env.CLOUDANT_APIKEY
 });
@@ -21,15 +21,14 @@ const cloudant = new CloudantV1({
   authenticator: authenticator
 });
 
-// Define o endereço do teu banco de dados
+// Define o endereço do seu banco de dados
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 
-// Nome fixo da base de dados que criaste no painel do Cloudant
+// Nome fixo do banco que você criou no painel do Cloudant
 const DB_NAME = 'palpites_2026';
 
-
 // =====================================================================
-// 2. ROTAS DA API (Os caminhos que o teu Frontend vai chamar)
+// 2. ROTAS DA API (Os caminhos que o seu Frontend vai chamar)
 // =====================================================================
 
 // ROTA A: Salvar Palpites dos Jogos Individuais (Vem da página 'palpites.html')
@@ -89,28 +88,31 @@ app.get('/ranking', async (req, res) => {
       selector: {
         type: { "$eq": "palpite" }
       },
-      limit: 1000 // Limite de documentos a procurar. Aumenta se necessário no futuro.
+      limit: 2000 // Limite de documentos a procurar. Aumente se o bolão crescer muito.
     });
 
     const todosPalpites = response.result.docs;
 
-    // 2. Agrupa a contagem por utilizador (Email)
+    // 2. Agrupa a contagem por usuário (Email)
     const usuarios = {};
 
     todosPalpites.forEach(palpite => {
       const email = palpite.user_email || 'anonimo@bolao.com';
       
+      // Pega o nome completo que vem do frontend, ou faz o fallback pro começo do email se for um palpite antigo de teste
+      const nomeReal = palpite.user_name || email.split('@')[0].replace('.', ' ');
+      
       if (!usuarios[email]) {
         // Se é a primeira vez que vemos este email, criamos o perfil dele
         usuarios[email] = {
           email: email,
-          nome: email.split('@')[0].replace('.', ' '), // Ex: 'joao.silva' vira 'joao silva'
+          nome: nomeReal, 
           pontos: 0, // A ser atualizado quando os jogos reais acontecerem
           totalPalpites: 0
         };
       }
       
-      // Adiciona +1 à contagem de palpites registados por esta pessoa
+      // Adiciona +1 à contagem de palpites registrados por essa pessoa
       usuarios[email].totalPalpites += 1;
     });
 
@@ -120,7 +122,7 @@ app.get('/ranking', async (req, res) => {
       if (b.pontos !== a.pontos) {
         return b.pontos - a.pontos;
       }
-      return b.totalPalpites - a.totalPalpites; // Criterio de desempate temporário
+      return b.totalPalpites - a.totalPalpites;
     });
 
     // Devolve a lista formatada para o HTML desenhar a tabela
@@ -132,12 +134,11 @@ app.get('/ranking', async (req, res) => {
   }
 });
 
-
 // =====================================================================
 // 3. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 // O Render define a porta automaticamente através da variável process.env.PORT
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Servidor do Bolão 2026 a rodar na porta ${port}`);
+  console.log(`Servidor do Bolão 2026 rodando na porta ${port}`);
 });
