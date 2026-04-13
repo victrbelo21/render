@@ -199,6 +199,34 @@ app.get('/ranking', async (req, res) => {
   }
 });
 
+// ROTA D: Buscar Palpites de um Usuário Específico
+app.post('/buscar-cartela', async (req, res) => {
+  try {
+    const { user_email } = req.body;
+
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: {
+        type: { "$eq": "cartela_usuario" },
+        user_email: { "$eq": user_email }
+      }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+
+    // Se achou a cartela, devolve os palpites salvos. Se não, devolve array vazio.
+    if (existingDoc) {
+      res.status(200).json({ success: true, palpites: existingDoc.palpites_jogos || [] });
+    } else {
+      res.status(200).json({ success: true, palpites: [] });
+    }
+
+  } catch (error) {
+    console.error("Erro na rota /buscar-cartela:", error);
+    res.status(500).json({ success: false, error: 'Erro ao buscar cartela do usuário' });
+  }
+});
+
 // =====================================================================
 // 4. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
