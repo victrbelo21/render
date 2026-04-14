@@ -1,12 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch'); // Certifique-se de ter rodado: npm install node-fetch@2
+const fetch = require('node-fetch');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
 const app = express();
 
-// Configuração do CORS e JSON
+// Configuração do CORS e Parse de JSON
 app.use(cors());
 app.use(express.json());
 
@@ -28,20 +28,14 @@ const DB_NAME = 'palpites_2026';
 // 2. ROTA DE NOTÍCIAS (Proxy para burlar o CORS da NewsAPI)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    // Sua chave da NewsAPI
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    
-    // Filtro para garantir apenas Copa do Mundo 2026 e Futebol (evita ginástica e outros)
+    // Filtro para garantir apenas Copa do Mundo 2026 e Futebol
     const query = encodeURIComponent('"Copa do Mundo FIFA 2026" OR ("Copa do Mundo 2026" AND futebol)');
-    
-    // Buscamos as 5 notícias mais recentes
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
         const data = await response.json();
-        
-        // Retorna os dados da NewsAPI direto para o seu frontend
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
@@ -50,7 +44,7 @@ app.get('/noticias', async (req, res) => {
 });
 
 // =====================================================================
-// 3. ROTAS DO BOLÃO (Cloudant)
+// 3. ROTAS DO BOLÃO (Cloudant - Palpites e Ranking)
 // =====================================================================
 
 // ROTA A: Salvar Palpites em Lote
@@ -108,7 +102,6 @@ app.post('/salvar-lote', async (req, res) => {
 
       res.status(200).json({ success: true, message: "Cartela criada com sucesso" });
     }
-
   } catch (error) {
     console.error("Erro na rota /salvar-lote:", error);
     res.status(500).json({ success: false, error: 'Erro ao processar lote no servidor' });
@@ -157,7 +150,6 @@ app.post('/salvar-final', async (req, res) => {
       });
       res.status(200).json({ success: true, message: "Cartela criada via final" });
     }
-
   } catch (error) {
     console.error("Erro na rota /salvar-final:", error);
     res.status(500).json({ success: false, error: 'Erro ao processar palpite final' });
@@ -181,7 +173,7 @@ app.get('/ranking', async (req, res) => {
       return {
         email: cartela.user_email,
         nome: cartela.user_name,
-        pontos: 0,
+        pontos: 0, // A lógica de pontos será implementada durante os jogos
         totalPalpites: cartela.palpites_jogos ? cartela.palpites_jogos.length : 0
       };
     });
@@ -192,14 +184,13 @@ app.get('/ranking', async (req, res) => {
     });
 
     res.status(200).json({ success: true, ranking: rankingArray });
-
   } catch (error) {
     console.error("Erro na rota /ranking:", error);
     res.status(500).json({ success: false, error: 'Erro ao gerar o ranking' });
   }
 });
 
-// ROTA D: Buscar Palpites de um Usuário Específico
+// ROTA D: Buscar Palpites de um Usuário Específico (Auto-preenchimento)
 app.post('/buscar-cartela', async (req, res) => {
   try {
     const { user_email } = req.body;
@@ -214,13 +205,11 @@ app.post('/buscar-cartela', async (req, res) => {
 
     const existingDoc = searchResponse.result.docs[0];
 
-    // Se achou a cartela, devolve os palpites salvos. Se não, devolve array vazio.
     if (existingDoc) {
       res.status(200).json({ success: true, palpites: existingDoc.palpites_jogos || [] });
     } else {
       res.status(200).json({ success: true, palpites: [] });
     }
-
   } catch (error) {
     console.error("Erro na rota /buscar-cartela:", error);
     res.status(500).json({ success: false, error: 'Erro ao buscar cartela do usuário' });
@@ -228,9 +217,61 @@ app.post('/buscar-cartela', async (req, res) => {
 });
 
 // =====================================================================
-// 4. INICIALIZAÇÃO DO SERVIDOR
+// 4. ROTAS DA RESENHA (Mural de Interações)
+// =====================================================================
+
+// Salvar uma nova mensagem no chat
+app.post('/chat', async (req, res) => {
+    try {
+        const { user_email, user_name, mensagem } = req.body;
+
+        const novoDocumento = {
+            type: "chat_message",
+            user_email: user_email,
+            user_name: user_name,
+            mensagem: mensagem,
+            timestamp: new Date().toISOString()
+        };
+
+        await cloudant.postDocument({
+            db: DB_NAME,
+            document: novoDocumento
+        });
+
+        res.status(200).json({ success: true, message: "Mensagem postada!" });
+    } catch (error) {
+        console.error("Erro ao salvar mensagem:", error);
+        res.status(500).json({ success: false, error: 'Erro ao postar mensagem' });
+    }
+});
+
+// Buscar as últimas mensagens para exibir
+app.get('/chat', async (req, res) => {
+    try {
+        const response = await cloudant.postFind({
+            db: DB_NAME,
+            selector: {
+                type: { "$eq": "chat_message" }
+            },
+            limit: 50 // Traz as últimas 50 mensagens
+        });
+
+        let mensagens = response.result.docs;
+
+        // Ordena para a mais recente ficar no topo do array
+        mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        res.status(200).json({ success: true, mensagens: mensagens });
+    } catch (error) {
+        console.error("Erro ao buscar chat:", error);
+        res.status(500).json({ success: false, error: 'Erro ao carregar o mural' });
+    }
+});
+
+// =====================================================================
+// 5. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Servidor do Bolão 2026 (Backend + Proxy News) rodando na porta ${port}`);
+  console.log(`Servidor do Bolão 2026 rodando na porta ${port}`);
 });
