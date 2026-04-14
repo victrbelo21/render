@@ -220,51 +220,79 @@ app.post('/buscar-cartela', async (req, res) => {
 // 4. ROTAS DA RESENHA (Mural de Interações)
 // =====================================================================
 
-// Salvar uma nova mensagem no chat
+// Salvar uma nova mensagem principal
 app.post('/chat', async (req, res) => {
     try {
         const { user_email, user_name, mensagem } = req.body;
-
         const novoDocumento = {
             type: "chat_message",
-            user_email: user_email,
-            user_name: user_name,
-            mensagem: mensagem,
-            timestamp: new Date().toISOString()
+            user_email, user_name, mensagem,
+            timestamp: new Date().toISOString(),
+            likes: [],   // Array para guardar quem curtiu
+            replies: []  // Array para guardar as respostas
         };
-
-        await cloudant.postDocument({
-            db: DB_NAME,
-            document: novoDocumento
-        });
-
+        await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
         res.status(200).json({ success: true, message: "Mensagem postada!" });
     } catch (error) {
-        console.error("Erro ao salvar mensagem:", error);
         res.status(500).json({ success: false, error: 'Erro ao postar mensagem' });
     }
 });
 
-// Buscar as últimas mensagens para exibir
+// Buscar as últimas mensagens
 app.get('/chat', async (req, res) => {
     try {
         const response = await cloudant.postFind({
             db: DB_NAME,
-            selector: {
-                type: { "$eq": "chat_message" }
-            },
-            limit: 50 // Traz as últimas 50 mensagens
+            selector: { type: { "$eq": "chat_message" } },
+            limit: 50
         });
-
         let mensagens = response.result.docs;
-
-        // Ordena para a mais recente ficar no topo do array
         mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
         res.status(200).json({ success: true, mensagens: mensagens });
     } catch (error) {
-        console.error("Erro ao buscar chat:", error);
         res.status(500).json({ success: false, error: 'Erro ao carregar o mural' });
+    }
+});
+
+// Dar ou Remover Like
+app.post('/chat/like', async (req, res) => {
+    try {
+        const { msg_id, user_email } = req.body;
+        // Puxa o documento original
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+        
+        if (!doc.likes) doc.likes = [];
+        const index = doc.likes.indexOf(user_email);
+        
+        if (index > -1) {
+            doc.likes.splice(index, 1); // Se já curtiu, remove o like (Toggle)
+        } else {
+            doc.likes.push(user_email); // Se não curtiu, adiciona
+        }
+
+        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao curtir' });
+    }
+});
+
+// Responder uma mensagem
+app.post('/chat/reply', async (req, res) => {
+    try {
+        const { msg_id, user_email, user_name, mensagem } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        if (!doc.replies) doc.replies = [];
+        doc.replies.push({
+            user_email, user_name, mensagem,
+            timestamp: new Date().toISOString()
+        });
+
+        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao responder' });
     }
 });
 
