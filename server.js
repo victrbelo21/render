@@ -1,12 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const fetch = require('node-fetch'); // Requer: npm install node-fetch@2
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
 const app = express();
 
-// Configuração do CORS e Parse de JSON
+// Configuração de segurança e parse
 app.use(cors());
 app.use(express.json());
 
@@ -25,11 +25,10 @@ cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
 // =====================================================================
-// 2. ROTA DE NOTÍCIAS (Proxy para burlar o CORS da NewsAPI)
+// 2. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    // Filtro para garantir apenas Copa do Mundo 2026 e Futebol
     const query = encodeURIComponent('"Copa do Mundo FIFA 2026" OR ("Copa do Mundo 2026" AND futebol)');
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
 
@@ -39,15 +38,15 @@ app.get('/noticias', async (req, res) => {
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
-        res.status(500).json({ status: "error", message: "Falha ao buscar notícias no servidor" });
+        res.status(500).json({ status: "error", message: "Falha ao buscar notícias" });
     }
 });
 
 // =====================================================================
-// 3. ROTAS DO BOLÃO (Cloudant - Palpites e Ranking)
+// 3. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
 // =====================================================================
 
-// ROTA A: Salvar Palpites em Lote
+// Salvar Palpites em Lote (Cria ou Atualiza a Cartela)
 app.post('/salvar-lote', async (req, res) => {
   try {
     const { user_email, user_name, palpites } = req.body;
@@ -65,6 +64,7 @@ app.post('/salvar-lote', async (req, res) => {
     if (existingDoc) {
       let palpitesAtuais = existingDoc.palpites_jogos || [];
 
+      // Mescla os palpites novos com os antigos
       palpites.forEach(novoPalpite => {
         const index = palpitesAtuais.findIndex(p => p.time_1 === novoPalpite.time_1 && p.time_2 === novoPalpite.time_2);
         if (index >= 0) {
@@ -83,36 +83,28 @@ app.post('/salvar-lote', async (req, res) => {
         docId: existingDoc._id,
         document: existingDoc
       });
-
-      res.status(200).json({ success: true, message: "Cartela atualizada com sucesso" });
+      res.status(200).json({ success: true, message: "Cartela atualizada" });
     } else {
       const novoDocumento = {
         type: "cartela_usuario",
-        user_email: user_email,
-        user_name: user_name,
+        user_email, user_name, 
         palpites_jogos: palpites,
         palpite_final: null,
         timestamp: new Date().toISOString()
       };
-
-      await cloudant.postDocument({
-        db: DB_NAME,
-        document: novoDocumento
-      });
-
-      res.status(200).json({ success: true, message: "Cartela criada com sucesso" });
+      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
+      res.status(200).json({ success: true, message: "Cartela criada" });
     }
   } catch (error) {
-    console.error("Erro na rota /salvar-lote:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar lote no servidor' });
+    console.error("Erro /salvar-lote:", error);
+    res.status(500).json({ success: false, error: 'Erro ao processar lote' });
   }
 });
 
-// ROTA B: Salvar Palpite da Final
+// Salvar Palpite da Final
 app.post('/salvar-final', async (req, res) => {
   try {
     const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
-
     const searchResponse = await cloudant.postFind({
       db: DB_NAME,
       selector: {
@@ -127,57 +119,42 @@ app.post('/salvar-final', async (req, res) => {
     if (existingDoc) {
       existingDoc.palpite_final = dadosDaFinal;
       existingDoc.timestamp = new Date().toISOString();
-
-      await cloudant.putDocument({
-        db: DB_NAME,
-        docId: existingDoc._id,
-        document: existingDoc
-      });
-      res.status(200).json({ success: true, message: "Final adicionada à cartela" });
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Final salva" });
     } else {
       const novoDocumento = {
         type: "cartela_usuario",
-        user_email: user_email,
-        user_name: user_name || user_email.split('@')[0],
+        user_email, user_name: user_name || user_email.split('@')[0],
         palpites_jogos: [],
         palpite_final: dadosDaFinal,
         timestamp: new Date().toISOString()
       };
-
-      await cloudant.postDocument({
-        db: DB_NAME,
-        document: novoDocumento
-      });
-      res.status(200).json({ success: true, message: "Cartela criada via final" });
+      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
+      res.status(200).json({ success: true, message: "Cartela criada com a final" });
     }
   } catch (error) {
-    console.error("Erro na rota /salvar-final:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar palpite final' });
+    res.status(500).json({ success: false, error: 'Erro palpite final' });
   }
 });
 
-// ROTA C: Buscar o Ranking Geral
+// Gerar o Ranking Geral
 app.get('/ranking', async (req, res) => {
   try {
     const response = await cloudant.postFind({
       db: DB_NAME,
-      selector: {
-        type: { "$eq": "cartela_usuario" }
-      },
+      selector: { type: { "$eq": "cartela_usuario" } },
       limit: 2000
     });
 
     const cartelas = response.result.docs;
-
-    const rankingArray = cartelas.map(cartela => {
-      return {
+    const rankingArray = cartelas.map(cartela => ({
         email: cartela.user_email,
         nome: cartela.user_name,
-        pontos: 0, // A lógica de pontos será implementada durante os jogos
+        pontos: 0, // A lógica matemática de acertos entra aqui depois
         totalPalpites: cartela.palpites_jogos ? cartela.palpites_jogos.length : 0
-      };
-    });
+    }));
 
+    // Ordena: Maior ponto primeiro, desempate por mais palpites feitos
     rankingArray.sort((a, b) => {
       if (b.pontos !== a.pontos) return b.pontos - a.pontos;
       return b.totalPalpites - a.totalPalpites;
@@ -185,42 +162,31 @@ app.get('/ranking', async (req, res) => {
 
     res.status(200).json({ success: true, ranking: rankingArray });
   } catch (error) {
-    console.error("Erro na rota /ranking:", error);
-    res.status(500).json({ success: false, error: 'Erro ao gerar o ranking' });
+    res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
   }
 });
 
-// ROTA D: Buscar Palpites de um Usuário Específico (Auto-preenchimento)
+// Buscar cartela de um usuário para Auto-Preenchimento
 app.post('/buscar-cartela', async (req, res) => {
   try {
     const { user_email } = req.body;
-
     const searchResponse = await cloudant.postFind({
       db: DB_NAME,
-      selector: {
-        type: { "$eq": "cartela_usuario" },
-        user_email: { "$eq": user_email }
-      }
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
     });
 
     const existingDoc = searchResponse.result.docs[0];
-
-    if (existingDoc) {
-      res.status(200).json({ success: true, palpites: existingDoc.palpites_jogos || [] });
-    } else {
-      res.status(200).json({ success: true, palpites: [] });
-    }
+    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [] });
   } catch (error) {
-    console.error("Erro na rota /buscar-cartela:", error);
-    res.status(500).json({ success: false, error: 'Erro ao buscar cartela do usuário' });
+    res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
   }
 });
 
 // =====================================================================
-// 4. ROTAS DA RESENHA (Mural de Interações)
+// 4. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes e Replies)
 // =====================================================================
 
-// Salvar uma nova mensagem principal
+// Postar mensagem principal
 app.post('/chat', async (req, res) => {
     try {
         const { user_email, user_name, mensagem } = req.body;
@@ -228,8 +194,8 @@ app.post('/chat', async (req, res) => {
             type: "chat_message",
             user_email, user_name, mensagem,
             timestamp: new Date().toISOString(),
-            likes: [],   // Array para guardar quem curtiu
-            replies: []  // Array para guardar as respostas
+            likes: [],   // Array para e-mails de quem curtiu
+            replies: []  // Array para os sub-comentários
         };
         await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
         res.status(200).json({ success: true, message: "Mensagem postada!" });
@@ -238,13 +204,13 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Buscar as últimas mensagens
+// Buscar feed de mensagens
 app.get('/chat', async (req, res) => {
     try {
         const response = await cloudant.postFind({
             db: DB_NAME,
             selector: { type: { "$eq": "chat_message" } },
-            limit: 50
+            limit: 100 // Puxa as 100 mais recentes
         });
         let mensagens = response.result.docs;
         mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -254,20 +220,19 @@ app.get('/chat', async (req, res) => {
     }
 });
 
-// Dar ou Remover Like
+// Curtir / Descurtir Mensagem Principal (Toggle)
 app.post('/chat/like', async (req, res) => {
     try {
         const { msg_id, user_email } = req.body;
-        // Puxa o documento original
         const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
         
         if (!doc.likes) doc.likes = [];
         const index = doc.likes.indexOf(user_email);
         
         if (index > -1) {
-            doc.likes.splice(index, 1); // Se já curtiu, remove o like (Toggle)
+            doc.likes.splice(index, 1); // Remove
         } else {
-            doc.likes.push(user_email); // Se não curtiu, adiciona
+            doc.likes.push(user_email); // Adiciona
         }
 
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
@@ -277,16 +242,22 @@ app.post('/chat/like', async (req, res) => {
     }
 });
 
-// Responder uma mensagem
+// Postar uma Resposta (Reply)
 app.post('/chat/reply', async (req, res) => {
     try {
         const { msg_id, user_email, user_name, mensagem } = req.body;
         const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
 
         if (!doc.replies) doc.replies = [];
+        
+        // Injeta a resposta gerando um ID pseudo-randômico único para ela
         doc.replies.push({
-            user_email, user_name, mensagem,
-            timestamp: new Date().toISOString()
+            reply_id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+            user_email, 
+            user_name, 
+            mensagem,
+            timestamp: new Date().toISOString(),
+            likes: [] 
         });
 
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
@@ -296,10 +267,35 @@ app.post('/chat/reply', async (req, res) => {
     }
 });
 
+// Curtir / Descurtir uma Resposta (Reply Like Toggle)
+app.post('/chat/reply/like', async (req, res) => {
+    try {
+        const { msg_id, reply_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        const reply = doc.replies.find(r => r.reply_id === reply_id);
+        
+        if (reply) {
+            if (!reply.likes) reply.likes = [];
+            const index = reply.likes.indexOf(user_email);
+            
+            if (index > -1) {
+                reply.likes.splice(index, 1); // Remove
+            } else {
+                reply.likes.push(user_email); // Adiciona
+            }
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        }
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao curtir resposta' });
+    }
+});
+
 // =====================================================================
 // 5. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Servidor do Bolão 2026 rodando na porta ${port}`);
+  console.log(`Servidor Node.js (Bolão + Proxy + Chat) rodando na porta ${port}`);
 });
