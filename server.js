@@ -183,7 +183,7 @@ app.post('/buscar-cartela', async (req, res) => {
 });
 
 // =====================================================================
-// 4. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes e Replies)
+// 4. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
 // =====================================================================
 
 // Postar mensagem principal
@@ -289,6 +289,29 @@ app.post('/chat/reply/like', async (req, res) => {
         res.status(200).json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Erro ao curtir resposta' });
+    }
+});
+
+// Apagar um Post Principal
+app.post('/chat/delete', async (req, res) => {
+    try {
+        const { msg_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        // Validação de segurança: só o dono do post pode apagar
+        if (doc.user_email === user_email) {
+            await cloudant.deleteDocument({
+                db: DB_NAME,
+                docId: doc._id,
+                rev: doc._rev
+            });
+            res.status(200).json({ success: true });
+        } else {
+            res.status(403).json({ success: false, error: 'Não autorizado' });
+        }
+    } catch (error) {
+        console.error("Erro ao apagar:", error);
+        res.status(500).json({ success: false, error: 'Erro ao apagar mensagem' });
     }
 });
 
