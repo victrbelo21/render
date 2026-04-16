@@ -25,16 +25,37 @@ cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
 // =====================================================================
-// 2. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI)
+// 2. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" AND "futebol" -bet -neymar');
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
+    
+    // 1. Bloqueamos as palavras direto na fonte usando o sinal de menos (-)
+    // Adicionei "aposta" e "apostas" por garantia, já que o alvo são as bets!
+    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -neymar -bets -aposta -apostas');
+    
+    // 2. Pedimos 15 notícias em vez de 5, para ter "gordura" para filtrar as nulas
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
         const data = await response.json();
+
+        // 3. Se a API retornou os dados com sucesso, fazemos a faxina dos nulos
+        if (data.status === 'ok' && data.articles) {
+            
+            const artigosValidos = data.articles.filter(article => {
+                // Mantém apenas os artigos que tem Título, Imagem, Descrição e que não foram removidos pela fonte
+                return article.title && 
+                       article.title !== '[Removed]' && 
+                       article.urlToImage && 
+                       article.description;
+            });
+
+            // 4. Cortamos apenas os 5 primeiros artigos válidos para devolver ao Front-end
+            data.articles = artigosValidos.slice(0, 5);
+        }
+
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
