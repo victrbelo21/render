@@ -32,7 +32,7 @@ app.get('/noticias', async (req, res) => {
     
     // 1. Bloqueamos as palavras direto na fonte usando o sinal de menos (-)
     // Adicionei "aposta" e "apostas" por garantia, já que o alvo são as bets!
-    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -bets -bet -bayern -aposta -apostas -1958 -1962 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022');
+    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -ig.com.br -bets -bet -bayern -aposta -apostas -1958 -1962 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022');
     
     // 2. Pedimos 15 notícias em vez de 5, para ter "gordura" para filtrar as nulas
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
