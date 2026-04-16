@@ -29,7 +29,7 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" OR ("Copa do Mundo 2026" AND futebol)');
+    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" AND "futebol" -bet -neymar');
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
 
     try {
