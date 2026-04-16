@@ -35,7 +35,7 @@ app.get('/noticias', async (req, res) => {
     const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -aposta -apostas -1958 -1962 -1970 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022');
     
     // 2. Pedimos 15 notícias em vez de 5, para ter "gordura" para filtrar as nulas
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
+    const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
