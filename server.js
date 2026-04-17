@@ -54,9 +54,12 @@ const dicionarioTimes = {
     "argentina": "argentina"
 };
 
-// Função que traduz o nome antes de procurar na API
+// Função que traduz o nome e arranca Emojis/Bandeiras antes de procurar
 function traduzirTime(nomeBR) {
-    const nomeLimpo = nomeBR.toLowerCase().trim();
+    // 1. O código mágico /[^...]/gu arranca tudo que não for Letra ou Número
+    let nomeLimpo = nomeBR.replace(/[^\p{L}\p{N}\s]/gu, '').toLowerCase().trim();
+    
+    // 2. Procura no dicionário
     return dicionarioTimes[nomeLimpo] || nomeLimpo; 
 }
 
