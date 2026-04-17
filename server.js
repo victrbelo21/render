@@ -48,8 +48,8 @@ const dicionarioTimes = {
     "croácia": "croatia",
     "marrocos": "morocco",
     "arábia saudita": "FC Barcelona",
-    "méxico": "Paris Saint-Germain FC"
-    "argentina": "argentina"
+    "méxico": "Paris Saint-Germain FC",
+    "argentina": "argentina",
 };
 
 // Função que traduz o nome e arranca Emojis/Bandeiras antes de procurar
