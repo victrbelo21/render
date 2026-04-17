@@ -69,13 +69,14 @@ cron.schedule('*/2 * * * *', async () => {
     
     try {
         // Busca jogos da Copa do Mundo ('WC') que já terminaram ('FINISHED')
-        // Trocamos 'WC' por 'CL' (Champions League) e removemos o season=2022
+        // Trocamos 'WC' por 'CL' (Champions League) para testes
         const response = await fetch(`https://api.football-data.org/v4/competitions/CL/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
         const data = await response.json();
         console.log(`📊 Achamos ${data.matches ? data.matches.length : 0} jogos finalizados!`);
+        
         // Raio-X de Erros
         if (data.errorCode) {
             console.log('❌ Erro na API:', data.message);
@@ -88,16 +89,16 @@ cron.schedule('*/2 * * * *', async () => {
             console.log('Nenhum jogo novo finalizado no momento.');
             return;
         }
+        
         // 1. Pedindo TODAS as cartelas sem limite do banco
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
             selector: { type: { "$eq": "cartela_usuario" } },
-            limit: 2000 // <--- O SEGREDO ESTAVA AQUI!
+            limit: 2000
         });
 
         const cartelas = userDocs.result.docs;
         
-        // Vai avisar no log quantos usuários achou no total
         console.log(`📂 Encontramos ${cartelas.length} cartelas de usuários no banco.`);
 
         for (let doc of cartelas) {
@@ -111,18 +112,68 @@ cron.schedule('*/2 * * * *', async () => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
 
-                // =======================================================
-                // 🕵️ RAIO-X TURBINADO (Com nome do usuário)
-                // =======================================================
                 console.log(`\n--- 👤 CARTELA DE: ${doc.user_name || doc.user_email} ---`);
                 console.log(`📝 Palpite: [${palpite.time_1}] x [${palpite.time_2}]`);
                 console.log(`🗣️ Traduzido para: [${time1Ingles}] x [${time2Ingles}]`);
-                // =======================================================
 
                 let placarReal1 = null;
                 let placarReal2 = null;
 
-                // ... (daqui pra baixo continua a lógica bi-direcional que já fizemos)
+                // 2. Faz a busca super-inteligente (Lê nas duas direções)
+                const jogoOficial = jogosOficiais.find(j => {
+                    const home = j.homeTeam.name.toLowerCase();
+                    const away = j.awayTeam.name.toLowerCase();
+
+                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
+                                       (away.includes(time2Ingles) || time2Ingles.includes(away));
+
+                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
+                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
+
+                    if (ordemExata) {
+                        placarReal1 = j.score.fullTime.home;
+                        placarReal2 = j.score.fullTime.away;
+                        return true;
+                    } else if (ordemInvertida) {
+                        placarReal1 = j.score.fullTime.away;
+                        placarReal2 = j.score.fullTime.home;
+                        return true;
+                    }
+                    return false;
+                });
+
+                if (jogoOficial && !palpite.pontuado) {
+                    const palpite1 = palpite.placar_1;
+                    const palpite2 = palpite.placar_2;
+
+                    let pontosGanhos = 0;
+
+                    if (palpite1 === placarReal1 && palpite2 === placarReal2) {
+                        pontosGanhos = 5; 
+                    } else {
+                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
+                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                    }
+
+                    if (pontosGanhos > 0) {
+                        palpite.pontos_obtidos = pontosGanhos;
+                        palpite.pontuado = true;
+                        houveMudanca = true;
+                    }
+                }
+                
+                pontosTotal += (palpite.pontos_obtidos || 0);
+            }); // <--- O fechamento do forEach que estava faltando!
+
+            // <--- O salvamento no banco de dados que estava faltando!
+            if (houveMudanca) {
+                doc.pontos_acumulados = pontosTotal;
+                await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+            }
+
+        } // <--- O fechamento do "for (let doc of cartelas)" que estava faltando!
+        
         console.log('✅ Pontuações sincronizadas com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
