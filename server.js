@@ -63,7 +63,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('*/2 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
@@ -106,27 +106,46 @@ cron.schedule('*/10 * * * *', async () => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
 
-                // 2. Faz a busca usando a estrutura da Football-Data (homeTeam.name)
-                const jogoOficial = jogosOficiais.find(j => 
-                    (j.homeTeam.name.toLowerCase().includes(time1Ingles) || 
-                     time1Ingles.includes(j.homeTeam.name.toLowerCase())) &&
-                    (j.awayTeam.name.toLowerCase().includes(time2Ingles) || 
-                     time2Ingles.includes(j.awayTeam.name.toLowerCase()))
-                );
+                let placarReal1 = null;
+                let placarReal2 = null;
+
+                // 2. Faz a busca super-inteligente (Lê nas duas direções)
+                const jogoOficial = jogosOficiais.find(j => {
+                    const home = j.homeTeam.name.toLowerCase();
+                    const away = j.awayTeam.name.toLowerCase();
+
+                    // Cenário A: A ordem da API é igual a do usuário
+                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
+                                       (away.includes(time2Ingles) || time2Ingles.includes(away));
+
+                    // Cenário B: A ordem da API está invertida (Time 2 em casa, Time 1 fora)
+                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
+                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
+
+                    if (ordemExata) {
+                        placarReal1 = j.score.fullTime.home;
+                        placarReal2 = j.score.fullTime.away;
+                        return true;
+                    } else if (ordemInvertida) {
+                        // Se a API inverteu os times, nós invertemos a ordem dos gols para não punir o usuário!
+                        placarReal1 = j.score.fullTime.away;
+                        placarReal2 = j.score.fullTime.home;
+                        return true;
+                    }
+                    return false;
+                });
 
                 if (jogoOficial && !palpite.pontuado) {
-                    // 3. Na nova API, os gols ficam dentro de score.fullTime
-                    const real1 = jogoOficial.score.fullTime.home;
-                    const real2 = jogoOficial.score.fullTime.away;
                     const palpite1 = palpite.placar_1;
                     const palpite2 = palpite.placar_2;
 
                     let pontosGanhos = 0;
 
-                    if (palpite1 === real1 && palpite2 === real2) {
+                    // Lógica de pontos: 5 pra mosca, 2 pro vencedor
+                    if (palpite1 === placarReal1 && palpite2 === placarReal2) {
                         pontosGanhos = 5; 
                     } else {
-                        const vencedorReal = real1 > real2 ? 1 : (real1 < real2 ? 2 : 0);
+                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
                         const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
@@ -137,6 +156,7 @@ cron.schedule('*/10 * * * *', async () => {
                         houveMudanca = true;
                     }
                 }
+                
                 pontosTotal += (palpite.pontos_obtidos || 0);
             });
 
