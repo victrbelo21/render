@@ -117,7 +117,7 @@ function formatarDataISO(dataString) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
-cron.schedule('*/45 * * * *', async () => {
+cron.schedule('*/1 * * * *', async () => {
     console.log('⚽ Verificando e recalculando resultados (Football-Data.org)...');
     
     try {
@@ -134,6 +134,15 @@ cron.schedule('*/45 * * * *', async () => {
         }
         
         const jogosOficiais = data.matches || [];
+
+      // --- ADICIONE ESTE BLOCO AQUI ---
+        if (jogosOficiais.length > 0) {
+            console.log(`\n--- 🕵️ GABARITO PARA O SEU TESTE ---`);
+            console.log(`Coloque no site -> Data: ${formatarDataISO(jogosOficiais[0].utcDate)}`);
+            console.log(`Mandante: ${jogosOficiais[0].homeTeam.name} | Visitante: ${jogosOficiais[0].awayTeam.name}`);
+            console.log(`Placar que você deve apostar: ${jogosOficiais[0].score.fullTime.home} x ${jogosOficiais[0].score.fullTime.away}`);
+            console.log(`-----------------------------------\n`);
+        }
 
         if (jogosOficiais.length === 0) {
             console.log('Nenhum jogo novo finalizado no momento.');
