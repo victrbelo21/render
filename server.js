@@ -33,7 +33,7 @@ const SEASON = 2026;
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Calcula pontos a cada 2 horas
 // =====================================================================
-cron.schedule('0 */2 * * *', async () => {
+cron.schedule('* * * * *', async () => {
     console.log('⚽ Verificando resultados na API Football...');
     
     try {
