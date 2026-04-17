@@ -66,7 +66,8 @@ cron.schedule('*/10 * * * *', async () => {
     
     try {
         // Busca jogos da Copa do Mundo ('WC') que já terminaram ('FINISHED')
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
+        // Adicionamos o season=2022 na URL!
+        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?season=2022&status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
