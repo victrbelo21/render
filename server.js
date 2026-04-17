@@ -63,7 +63,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/2 * * * *', async () => {
+cron.schedule('*/30 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
