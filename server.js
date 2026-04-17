@@ -49,7 +49,7 @@ const dicionarioTimes = {
     "croácia": "croatia",
     "marrocos": "morocco",
     "arábia saudita": "saudi arabia",
-    "méxico": "psg",
+    "méxico": "paris",
     "áfrica do sul": "barcelona",
     "argentina": "argentina"
 };
