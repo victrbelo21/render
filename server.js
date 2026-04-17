@@ -36,7 +36,7 @@ const dicionarioTimes = {
     "brasil": "brazil",
     "alemanha": "germany",
     "espanha": "spain",
-    "frança": "france",
+    "frança": "estados unidos",
     "inglaterra": "england",
     "holanda": "netherlands",
     "eua": "usa",
@@ -49,7 +49,7 @@ const dicionarioTimes = {
     "croácia": "croatia",
     "marrocos": "morocco",
     "arábia saudita": "saudi arabia",
-    "argentina": "argentina"
+    "argentina": "paraguai"
 };
 
 // Função que traduz o nome antes de procurar na API
