@@ -30,34 +30,42 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
 
-// Dicionário de Tradução (Português do Front-end -> Inglês da API)
-// Quando sair o sorteio oficial dos 48 times, basta completar esta lista!
+// Dicionário de Tradução (Sem acentos, pois nossa função nova remove tudo)
 const dicionarioTimes = {
     "brasil": "brazil",
     "alemanha": "germany",
     "espanha": "spain",
-    "frança": "france",
+    "franca": "france",
     "inglaterra": "england",
     "holanda": "netherlands",
     "estados unidos": "barcelona",
     "coreia do sul": "south korea",
-    "japão": "japan",
-    "camarões": "cameroon",
-    "suíça": "switzerland",
-    "sérvia": "serbia",
-    "croácia": "croatia",
+    "japao": "japan",
+    "camaroes": "cameroon",
+    "suica": "switzerland",
+    "servia": "serbia",
+    "croacia": "croatia",
     "marrocos": "morocco",
-    "áfrica do sul": "FC Barcelona",
-    "méxico": "Paris Saint-Germain FC",
+    "africa do sul": "fc barcelona",
+    "mexico": "paris saint germain fc", 
     "argentina": "argentina",
 };
 
-// Função que traduz o nome e arranca Emojis/Bandeiras antes de procurar
+// =====================================================================
+// FUNÇÕES DE LIMPEZA E TRADUÇÃO (Remove Acentos, Emojis e Pontuação)
+// =====================================================================
+function formatarTexto(texto) {
+    if (!texto) return '';
+    return texto.normalize('NFD') // Separa os acentos das letras
+                .replace(/[\u0300-\u036f]/g, '') // Remove os acentos matematicamente
+                .replace(/-/g, ' ') // Troca hífens por espaço (Saint-Germain vira Saint Germain)
+                .replace(/[^\w\s]/gi, '') // Remove emojis e pontuações restantes
+                .toLowerCase()
+                .trim();
+}
+
 function traduzirTime(nomeBR) {
-    // 1. O código mágico /[^...]/gu arranca tudo que não for Letra ou Número
-    let nomeLimpo = nomeBR.replace(/[^\p{L}\p{N}\s]/gu, '').toLowerCase().trim();
-    
-    // 2. Procura no dicionário
+    let nomeLimpo = formatarTexto(nomeBR);
     return dicionarioTimes[nomeLimpo] || nomeLimpo; 
 }
 
@@ -68,16 +76,12 @@ cron.schedule('*/2 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
-        // Busca jogos da Copa do Mundo ('WC') que já terminaram ('FINISHED')
-        // Trocamos 'WC' por 'CL' (Champions League) para testes
         const response = await fetch(`https://api.football-data.org/v4/competitions/CL/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
         const data = await response.json();
-        console.log(`📊 Achamos ${data.matches ? data.matches.length : 0} jogos finalizados!`);
         
-        // Raio-X de Erros
         if (data.errorCode) {
             console.log('❌ Erro na API:', data.message);
             return;
@@ -90,7 +94,6 @@ cron.schedule('*/2 * * * *', async () => {
             return;
         }
         
-        // 1. Pedindo TODAS as cartelas sem limite do banco
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
             selector: { type: { "$eq": "cartela_usuario" } },
@@ -98,45 +101,33 @@ cron.schedule('*/2 * * * *', async () => {
         });
 
         const cartelas = userDocs.result.docs;
-        
-        console.log(`📂 Encontramos ${cartelas.length} cartelas de usuários no banco.`);
+        console.log(`📂 Verificando ${cartelas.length} cartelas de usuários...`);
 
         for (let doc of cartelas) {
             let pontosTotal = 0;
             let houveMudanca = false;
 
-            // Se o usuário ainda não fez nenhum palpite, pula pra próxima pessoa
             if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
 
             doc.palpites_jogos.forEach(palpite => {
-                const time1Ingles = traduzirTime(palpite.time_1).toLowerCase();
-                const time2Ingles = traduzirTime(palpite.time_2).toLowerCase();
-
-                console.log(`\n--- 👤 CARTELA DE: ${doc.user_name || doc.user_email} ---`);
-                console.log(`📝 Palpite: [${palpite.time_1}] x [${palpite.time_2}]`);
-                console.log(`🗣️ Traduzido para: [${time1Ingles}] x [${time2Ingles}]`);
+                const time1Ingles = traduzirTime(palpite.time_1);
+                const time2Ingles = traduzirTime(palpite.time_2);
 
                 let placarReal1 = null;
                 let placarReal2 = null;
 
-                // 2. Faz a busca super-inteligente (Lê nas duas direções)
                 const jogoOficial = jogosOficiais.find(j => {
-                    const home = j.homeTeam.name.toLowerCase();
-                    const away = j.awayTeam.name.toLowerCase();
+                    // Limpa também os nomes que vêm da API para bater exato
+                    const home = formatarTexto(j.homeTeam.name);
+                    const away = formatarTexto(j.awayTeam.name);
 
+                    // Ordem Estrita (Não inverte mais os times)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
-
-                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
-                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
 
                     if (ordemExata) {
                         placarReal1 = j.score.fullTime.home;
                         placarReal2 = j.score.fullTime.away;
-                        return true;
-                    } else if (ordemInvertida) {
-                        placarReal1 = j.score.fullTime.away;
-                        placarReal2 = j.score.fullTime.home;
                         return true;
                     }
                     return false;
@@ -148,6 +139,7 @@ cron.schedule('*/2 * * * *', async () => {
 
                     let pontosGanhos = 0;
 
+                    // Lógica de pontos (5, 2 ou 0)
                     if (palpite1 === placarReal1 && palpite2 === placarReal2) {
                         pontosGanhos = 5; 
                     } else {
@@ -156,25 +148,22 @@ cron.schedule('*/2 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    if (pontosGanhos > 0) {
-                        palpite.pontos_obtidos = pontosGanhos;
-                        palpite.pontuado = true;
-                        houveMudanca = true;
-                    }
+                    // Grava os pontos (mesmo que seja zero) e fecha o palpite
+                    palpite.pontos_obtidos = pontosGanhos;
+                    palpite.pontuado = true;
+                    houveMudanca = true;
                 }
                 
                 pontosTotal += (palpite.pontos_obtidos || 0);
-            }); // <--- O fechamento do forEach que estava faltando!
+            });
 
-            // <--- O salvamento no banco de dados que estava faltando!
             if (houveMudanca) {
                 doc.pontos_acumulados = pontosTotal;
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             }
-
-        } // <--- O fechamento do "for (let doc of cartelas)" que estava faltando!
+        }
         
-        console.log('✅ Pontuações sincronizadas com sucesso!');
+        console.log('✅ Checagem concluída com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
     }
