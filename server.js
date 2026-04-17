@@ -30,7 +30,7 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
 
-// Dicionário de Tradução (Sem acentos, pois nossa função nova remove tudo)
+// Dicionário de Tradução (Sem acentos, pois nossa função limpa tudo)
 const dicionarioTimes = {
     "brasil": "brazil",
     "alemanha": "germany",
@@ -38,7 +38,7 @@ const dicionarioTimes = {
     "franca": "france",
     "inglaterra": "england",
     "holanda": "netherlands",
-    "estados unidos": "barcelona",
+    "estados unidos": "barcelona", // Mantido para seus testes atuais da Champions
     "coreia do sul": "south korea",
     "japao": "japan",
     "camaroes": "cameroon",
@@ -46,20 +46,20 @@ const dicionarioTimes = {
     "servia": "serbia",
     "croacia": "croatia",
     "marrocos": "morocco",
-    "africa do sul": "fc barcelona",
-    "mexico": "paris saint germain fc", 
+    "africa do sul": "fc barcelona", // Mantido para seus testes atuais
+    "mexico": "paris saint germain fc", // Mantido para seus testes atuais
     "argentina": "argentina",
 };
 
 // =====================================================================
-// FUNÇÕES DE LIMPEZA E TRADUÇÃO (Remove Acentos, Emojis e Pontuação)
+// FUNÇÕES DE LIMPEZA E FORMATAÇÃO (Texto e Datas)
 // =====================================================================
 function formatarTexto(texto) {
     if (!texto) return '';
-    return texto.normalize('NFD') // Separa os acentos das letras
-                .replace(/[\u0300-\u036f]/g, '') // Remove os acentos matematicamente
-                .replace(/-/g, ' ') // Troca hífens por espaço (Saint-Germain vira Saint Germain)
-                .replace(/[^\w\s]/gi, '') // Remove emojis e pontuações restantes
+    return texto.normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '') 
+                .replace(/-/g, ' ') 
+                .replace(/[^\w\s]/gi, '') 
                 .toLowerCase()
                 .trim();
 }
@@ -69,13 +69,59 @@ function traduzirTime(nomeBR) {
     return dicionarioTimes[nomeLimpo] || nomeLimpo; 
 }
 
+// Extrai e padroniza a data para YYYY-MM-DD, aceitando o formato em Português do seu site
+function formatarDataISO(dataString) {
+    if (!dataString) return null;
+    
+    const dataLower = dataString.toLowerCase();
+
+    // 1. Se vier no formato do site: "Quinta-feira, 11 de Junho de 2026"
+    if (dataLower.includes(' de ')) {
+        const meses = {
+            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+            'abril': '04', 'maio': '05', 'junho': '06',
+            'julho': '07', 'agosto': '08', 'setembro': '09',
+            'outubro': '10', 'novembro': '11', 'dezembro': '12'
+        };
+
+        const match = dataLower.match(/(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})/);
+
+        if (match) {
+            const dia = match[1].padStart(2, '0');
+            const mesNome = match[2];
+            const ano = match[3];
+            const mes = meses[mesNome];
+
+            if (mes) {
+                return `${ano}-${mes}-${dia}`;
+            }
+        }
+    }
+
+    // 2. Se vier como DD/MM/YYYY
+    if (dataString.includes('/')) {
+        const partes = dataString.split('/');
+        if (partes.length === 3) {
+            return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+        }
+    }
+    
+    // 3. Se já vier como ISO padrão da API (ex: 2026-06-15T19:00:00Z)
+    if (dataString.length >= 10) {
+        return dataString.substring(0, 10);
+    }
+    
+    return dataString;
+}
+
 // =====================================================================
-// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
+// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
 cron.schedule('*/2 * * * *', async () => {
-    console.log('⚽ Verificando resultados na Football-Data.org...');
+    console.log('⚽ Verificando e recalculando resultados (Football-Data.org)...');
     
     try {
+        // ATENÇÃO: Está 'CL' (Champions) para testes. Quando for a Copa, troque 'CL' por 'WC'
         const response = await fetch(`https://api.football-data.org/v4/competitions/CL/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
@@ -101,31 +147,35 @@ cron.schedule('*/2 * * * *', async () => {
         });
 
         const cartelas = userDocs.result.docs;
-        console.log(`📂 Verificando ${cartelas.length} cartelas de usuários...`);
+        console.log(`📂 Recalculando ${cartelas.length} cartelas de usuários...`);
 
         for (let doc of cartelas) {
-            let pontosTotal = 0;
-            let houveMudanca = false;
+            let pontosTotalCalculado = 0;
+            let houveMudancaInterna = false; 
 
             if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
 
             doc.palpites_jogos.forEach(palpite => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
+                const dataPalpite = formatarDataISO(palpite.data_jogo);
 
                 let placarReal1 = null;
                 let placarReal2 = null;
 
                 const jogoOficial = jogosOficiais.find(j => {
-                    // Limpa também os nomes que vêm da API para bater exato
                     const home = formatarTexto(j.homeTeam.name);
                     const away = formatarTexto(j.awayTeam.name);
+                    const dataAPI = formatarDataISO(j.utcDate);
 
-                    // Ordem Estrita (Não inverte mais os times)
+                    // Trava 1: Verificação de Data
+                    const bateuData = dataPalpite ? (dataPalpite === dataAPI) : true;
+
+                    // Trava 2: Ordem Estrita de Nomes (Mandante x Visitante)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
 
-                    if (ordemExata) {
+                    if (bateuData && ordemExata) {
                         placarReal1 = j.score.fullTime.home;
                         placarReal2 = j.score.fullTime.away;
                         return true;
@@ -133,13 +183,13 @@ cron.schedule('*/2 * * * *', async () => {
                     return false;
                 });
 
-                if (jogoOficial && !palpite.pontuado) {
+                // Se encontrou o jogo, recalcula os pontos independente de já ter sido pontuado
+                if (jogoOficial) {
                     const palpite1 = palpite.placar_1;
                     const palpite2 = palpite.placar_2;
 
                     let pontosGanhos = 0;
 
-                    // Lógica de pontos (5, 2 ou 0)
                     if (palpite1 === placarReal1 && palpite2 === placarReal2) {
                         pontosGanhos = 5; 
                     } else {
@@ -148,22 +198,24 @@ cron.schedule('*/2 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    // Grava os pontos (mesmo que seja zero) e fecha o palpite
-                    palpite.pontos_obtidos = pontosGanhos;
-                    palpite.pontuado = true;
-                    houveMudanca = true;
+                    // Verifica se a pontuação atualizou
+                    if (palpite.pontos_obtidos !== pontosGanhos) {
+                        palpite.pontos_obtidos = pontosGanhos;
+                        houveMudancaInterna = true;
+                    }
                 }
                 
-                pontosTotal += (palpite.pontos_obtidos || 0);
+                pontosTotalCalculado += (palpite.pontos_obtidos || 0);
             });
 
-            if (houveMudanca) {
-                doc.pontos_acumulados = pontosTotal;
+            // Salva no banco caso alguma pontuação tenha mudado
+            if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
+                doc.pontos_acumulados = pontosTotalCalculado;
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             }
         }
         
-        console.log('✅ Checagem concluída com sucesso!');
+        console.log('✅ Recálculo contínuo finalizado com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
     }
@@ -217,21 +269,8 @@ app.post('/salvar-lote', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
 
     if (existingDoc) {
-      let palpitesAtuais = existingDoc.palpites_jogos || [];
-
-      palpites.forEach(novoPalpite => {
-        const index = palpitesAtuais.findIndex(p => p.time_1 === novoPalpite.time_1 && p.time_2 === novoPalpite.time_2);
-        if (index >= 0) {
-            // Só permite sobrescrever o palpite se ele AINDA NÃO FOI pontuado pelo Cron Job
-            if (!palpitesAtuais[index].pontuado) {
-                palpitesAtuais[index] = novoPalpite;
-            }
-        } else {
-          palpitesAtuais.push(novoPalpite);
-        }
-      });
-
-      existingDoc.palpites_jogos = palpitesAtuais;
+      // Atualiza a cartela inteira sempre (o cron cuida do recálculo)
+      existingDoc.palpites_jogos = palpites;
       existingDoc.user_name = user_name;
       existingDoc.timestamp = new Date().toISOString();
 
