@@ -88,14 +88,6 @@ cron.schedule('*/2 * * * *', async () => {
             console.log('Nenhum jogo novo finalizado no momento.');
             return;
         }
-
-        const userDocs = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: { "$eq": "cartela_usuario" } }
-        });
-
-        // ... (logo abaixo de const jogosOficiais = data.matches || [];)
-
         // 1. Pedindo TODAS as cartelas sem limite do banco
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
