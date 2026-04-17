@@ -36,7 +36,7 @@ const dicionarioTimes = {
     "brasil": "brazil",
     "alemanha": "germany",
     "espanha": "spain",
-    "frança": "estados unidos",
+    "frança": "france",
     "inglaterra": "england",
     "holanda": "netherlands",
     "eua": "usa",
@@ -49,7 +49,9 @@ const dicionarioTimes = {
     "croácia": "croatia",
     "marrocos": "morocco",
     "arábia saudita": "saudi arabia",
-    "argentina": "paraguai"
+    "méxico": "psg",
+    "áfrica do sul": "barcelona",
+    "argentina": "argentina"
 };
 
 // Função que traduz o nome antes de procurar na API
@@ -66,8 +68,8 @@ cron.schedule('*/10 * * * *', async () => {
     
     try {
         // Busca jogos da Copa do Mundo ('WC') que já terminaram ('FINISHED')
-        // Adicionamos o season=2022 na URL!
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?season=2022&status=FINISHED`, {
+        // Trocamos 'WC' por 'CL' (Champions League) e removemos o season=2022
+        const response = await fetch(`https://api.football-data.org/v4/competitions/CL/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
