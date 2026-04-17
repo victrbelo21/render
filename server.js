@@ -63,7 +63,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/30 * * * *', async () => {
+cron.schedule('*/2 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
@@ -105,6 +105,19 @@ cron.schedule('*/30 * * * *', async () => {
                 // 1. Traduz os times do palpite para inglês
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
+
+                // =======================================================
+                // 🕵️ RAIO-X MÁXIMO (Adicione este bloco aqui!)
+                // =======================================================
+                console.log(`\n--- 🔍 INSPECIONANDO CARTELA ---`);
+                console.log(`📝 O que veio do seu site: [${palpite.time_1}] x [${palpite.time_2}]`);
+                console.log(`🗣️ Como o Dicionário leu: [${time1Ingles}] x [${time2Ingles}]`);
+                console.log(`⚽ O que a API da Football-Data respondeu hoje:`);
+                jogosOficiais.forEach(j => {
+                    console.log(`   -> [${j.homeTeam.name}] x [${j.awayTeam.name}]`);
+                });
+                console.log(`--------------------------------\n`);
+                // =======================================================
 
                 let placarReal1 = null;
                 let placarReal2 = null;
