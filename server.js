@@ -394,6 +394,6 @@ app.post('/chat/delete', async (req, res) => {
 // 6. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Servidor Node.js (Bolão + Cron + Chat) rodando na porta ${port}`);
 });
