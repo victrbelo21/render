@@ -40,7 +40,7 @@ const dicionarioTimes = {
     "inglaterra": "england",
     "holanda": "netherlands",
     "eua": "usa",
-    "estados unidos": "usa",
+    "estados unidos": "barcelona",
     "coreia do sul": "south korea",
     "japão": "japan",
     "camarões": "cameroon",
