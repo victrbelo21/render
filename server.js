@@ -25,10 +25,10 @@ const cloudant = new CloudantV1({
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
-// Configuração API Football
-const API_SPORTS_KEY = 'dd565bdfa715526f0d535b52623bfe83';
-const LEAGUE_ID = 1; // ID da Copa do Mundo na API-Sports
-const SEASON = 2022;
+// =====================================================================
+// Configuração API Football-Data.org
+// =====================================================================
+const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
 
 // Dicionário de Tradução (Português do Front-end -> Inglês da API)
 // Quando sair o sorteio oficial dos 48 times, basta completar esta lista!
@@ -48,32 +48,37 @@ const dicionarioTimes = {
     "sérvia": "serbia",
     "croácia": "croatia",
     "marrocos": "morocco",
-    "arábia saudita": "saudi arabia"
+    "arábia saudita": "saudi arabia",
+    "argentina": "argentina"
 };
 
 // Função que traduz o nome antes de procurar na API
 function traduzirTime(nomeBR) {
     const nomeLimpo = nomeBR.toLowerCase().trim();
-    // Se achar a tradução, retorna em inglês. Se não achar, usa o original mesmo.
     return dicionarioTimes[nomeLimpo] || nomeLimpo; 
 }
 
 // =====================================================================
-// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Calcula pontos a cada 2 horas
+// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/5 * * * *', async () => {
-    console.log('⚽ Verificando resultados na API Football...');
+cron.schedule('*/10 * * * *', async () => {
+    console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
-        const response = await fetch(`https://v3.football.api-sports.io/fixtures?league=${LEAGUE_ID}&season=${SEASON}&status=FT`, {
-            headers: { 'x-apisports-key': API_SPORTS_KEY }
+        // Busca jogos da Copa do Mundo ('WC') que já terminaram ('FINISHED')
+        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
+            headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
         const data = await response.json();
-        console.log('🔍 Erros retornados pela API:', data.errors);
-        console.log('📊 Quantidade de resultados:', data.results);
-      
-        const jogosOficiais = data.response || [];
+        
+        // Raio-X de Erros
+        if (data.errorCode) {
+            console.log('❌ Erro na API:', data.message);
+            return;
+        }
+        
+        const jogosOficiais = data.matches || [];
 
         if (jogosOficiais.length === 0) {
             console.log('Nenhum jogo novo finalizado no momento.');
@@ -98,13 +103,37 @@ cron.schedule('*/5 * * * *', async () => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
 
-                // 2. Faz a busca usando as versões traduzidas
+                // 2. Faz a busca usando a estrutura da Football-Data (homeTeam.name)
                 const jogoOficial = jogosOficiais.find(j => 
-                    (j.teams.home.name.toLowerCase().includes(time1Ingles) || 
-                     time1Ingles.includes(j.teams.home.name.toLowerCase())) &&
-                    (j.teams.away.name.toLowerCase().includes(time2Ingles) || 
-                     time2Ingles.includes(j.teams.away.name.toLowerCase()))
+                    (j.homeTeam.name.toLowerCase().includes(time1Ingles) || 
+                     time1Ingles.includes(j.homeTeam.name.toLowerCase())) &&
+                    (j.awayTeam.name.toLowerCase().includes(time2Ingles) || 
+                     time2Ingles.includes(j.awayTeam.name.toLowerCase()))
                 );
+
+                if (jogoOficial && !palpite.pontuado) {
+                    // 3. Na nova API, os gols ficam dentro de score.fullTime
+                    const real1 = jogoOficial.score.fullTime.home;
+                    const real2 = jogoOficial.score.fullTime.away;
+                    const palpite1 = palpite.placar_1;
+                    const palpite2 = palpite.placar_2;
+
+                    let pontosGanhos = 0;
+
+                    if (palpite1 === real1 && palpite2 === real2) {
+                        pontosGanhos = 5; 
+                    } else {
+                        const vencedorReal = real1 > real2 ? 1 : (real1 < real2 ? 2 : 0);
+                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                    }
+
+                    if (pontosGanhos > 0) {
+                        palpite.pontos_obtidos = pontosGanhos;
+                        palpite.pontuado = true;
+                        houveMudanca = true;
+                    }
+                }
                 pontosTotal += (palpite.pontos_obtidos || 0);
             });
 
@@ -113,7 +142,7 @@ cron.schedule('*/5 * * * *', async () => {
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             }
         }
-        console.log('✅ Pontuações sincronizadas com sucesso.');
+        console.log('✅ Pontuações sincronizadas com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
     }
