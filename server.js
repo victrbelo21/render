@@ -28,7 +28,35 @@ const DB_NAME = 'palpites_2026';
 // Configuração API Football
 const API_SPORTS_KEY = 'dd565bdfa715526f0d535b52623bfe83';
 const LEAGUE_ID = 1; // ID da Copa do Mundo na API-Sports
-const SEASON = 2026;
+const SEASON = 2022;
+
+// Dicionário de Tradução (Português do Front-end -> Inglês da API)
+// Quando sair o sorteio oficial dos 48 times, basta completar esta lista!
+const dicionarioTimes = {
+    "brasil": "brazil",
+    "alemanha": "germany",
+    "espanha": "spain",
+    "frança": "france",
+    "inglaterra": "england",
+    "holanda": "netherlands",
+    "eua": "usa",
+    "estados unidos": "usa",
+    "coreia do sul": "south korea",
+    "japão": "japan",
+    "camarões": "cameroon",
+    "suíça": "switzerland",
+    "sérvia": "serbia",
+    "croácia": "croatia",
+    "marrocos": "morocco",
+    "arábia saudita": "saudi arabia"
+};
+
+// Função que traduz o nome antes de procurar na API
+function traduzirTime(nomeBR) {
+    const nomeLimpo = nomeBR.toLowerCase().trim();
+    // Se achar a tradução, retorna em inglês. Se não achar, usa o original mesmo.
+    return dicionarioTimes[nomeLimpo] || nomeLimpo; 
+}
 
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Calcula pontos a cada 2 horas
@@ -66,35 +94,17 @@ cron.schedule('*/15 * * * *', async () => {
             if (!doc.palpites_jogos) continue;
 
             doc.palpites_jogos.forEach(palpite => {
+                // 1. Traduz os times do palpite para inglês
+                const time1Ingles = traduzirTime(palpite.time_1);
+                const time2Ingles = traduzirTime(palpite.time_2);
+
+                // 2. Faz a busca usando as versões traduzidas
                 const jogoOficial = jogosOficiais.find(j => 
-                    (j.teams.home.name.toLowerCase().includes(palpite.time_1.toLowerCase()) || 
-                     palpite.time_1.toLowerCase().includes(j.teams.home.name.toLowerCase())) &&
-                    (j.teams.away.name.toLowerCase().includes(palpite.time_2.toLowerCase()) || 
-                     palpite.time_2.toLowerCase().includes(j.teams.away.name.toLowerCase()))
+                    (j.teams.home.name.toLowerCase().includes(time1Ingles) || 
+                     time1Ingles.includes(j.teams.home.name.toLowerCase())) &&
+                    (j.teams.away.name.toLowerCase().includes(time2Ingles) || 
+                     time2Ingles.includes(j.teams.away.name.toLowerCase()))
                 );
-
-                if (jogoOficial && !palpite.pontuado) {
-                    const real1 = jogoOficial.goals.home;
-                    const real2 = jogoOficial.goals.away;
-                    const palpite1 = palpite.placar_1;
-                    const palpite2 = palpite.placar_2;
-
-                    let pontosGanhos = 0;
-
-                    if (palpite1 === real1 && palpite2 === real2) {
-                        pontosGanhos = 5; 
-                    } else {
-                        const vencedorReal = real1 > real2 ? 1 : (real1 < real2 ? 2 : 0);
-                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
-                    }
-
-                    if (pontosGanhos > 0) {
-                        palpite.pontos_obtidos = pontosGanhos;
-                        palpite.pontuado = true;
-                        houveMudanca = true;
-                    }
-                }
                 pontosTotal += (palpite.pontos_obtidos || 0);
             });
 
