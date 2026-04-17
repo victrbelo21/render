@@ -117,7 +117,7 @@ function formatarDataISO(dataString) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
-cron.schedule('*/2 * * * *', async () => {
+cron.schedule('*/45 * * * *', async () => {
     console.log('⚽ Verificando e recalculando resultados (Football-Data.org)...');
     
     try {
