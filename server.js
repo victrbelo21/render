@@ -42,6 +42,9 @@ cron.schedule('*/15 * * * *', async () => {
         });
         
         const data = await response.json();
+        console.log('🔍 Erros retornados pela API:', data.errors);
+        console.log('📊 Quantidade de resultados:', data.results);
+      
         const jogosOficiais = data.response || [];
 
         if (jogosOficiais.length === 0) {
