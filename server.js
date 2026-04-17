@@ -72,7 +72,7 @@ cron.schedule('*/10 * * * *', async () => {
         });
         
         const data = await response.json();
-        
+        console.log(`📊 Achamos ${data.matches ? data.matches.length : 0} jogos finalizados!`);
         // Raio-X de Erros
         if (data.errorCode) {
             console.log('❌ Erro na API:', data.message);
