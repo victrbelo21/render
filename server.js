@@ -47,7 +47,7 @@ const dicionarioTimes = {
     "sérvia": "serbia",
     "croácia": "croatia",
     "marrocos": "morocco",
-    "arábia saudita": "FC Barcelona",
+    "áfrica do sul": "FC Barcelona",
     "méxico": "Paris Saint-Germain FC",
     "argentina": "argentina",
 };
