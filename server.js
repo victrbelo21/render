@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch'); // Requer: npm install node-fetch@2
+const fetch = require('node-fetch'); 
+const cron = require('node-cron');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
@@ -24,38 +25,108 @@ const cloudant = new CloudantV1({
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
+// Configuração API Football
+const API_SPORTS_KEY = 'dd565bdfa715526f0d535b52623bfe83';
+const LEAGUE_ID = 1; // ID da Copa do Mundo na API-Sports
+const SEASON = 2026;
+
 // =====================================================================
-// 2. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros)
+// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Calcula pontos a cada 2 horas
+// =====================================================================
+cron.schedule('0 */2 * * *', async () => {
+    console.log('⚽ Verificando resultados na API Football...');
+    
+    try {
+        const response = await fetch(`https://v3.football.api-sports.io/fixtures?league=${LEAGUE_ID}&season=${SEASON}&status=FT`, {
+            headers: { 'x-apisports-key': API_SPORTS_KEY }
+        });
+        
+        const data = await response.json();
+        const jogosOficiais = data.response || [];
+
+        if (jogosOficiais.length === 0) {
+            console.log('Nenhum jogo novo finalizado no momento.');
+            return;
+        }
+
+        const userDocs = await cloudant.postFind({
+            db: DB_NAME,
+            selector: { type: { "$eq": "cartela_usuario" } }
+        });
+
+        const cartelas = userDocs.result.docs;
+
+        for (let doc of cartelas) {
+            let pontosTotal = 0;
+            let houveMudanca = false;
+
+            if (!doc.palpites_jogos) continue;
+
+            doc.palpites_jogos.forEach(palpite => {
+                const jogoOficial = jogosOficiais.find(j => 
+                    (j.teams.home.name.toLowerCase().includes(palpite.time_1.toLowerCase()) || 
+                     palpite.time_1.toLowerCase().includes(j.teams.home.name.toLowerCase())) &&
+                    (j.teams.away.name.toLowerCase().includes(palpite.time_2.toLowerCase()) || 
+                     palpite.time_2.toLowerCase().includes(j.teams.away.name.toLowerCase()))
+                );
+
+                if (jogoOficial && !palpite.pontuado) {
+                    const real1 = jogoOficial.goals.home;
+                    const real2 = jogoOficial.goals.away;
+                    const palpite1 = palpite.placar_1;
+                    const palpite2 = palpite.placar_2;
+
+                    let pontosGanhos = 0;
+
+                    if (palpite1 === real1 && palpite2 === real2) {
+                        pontosGanhos = 5; 
+                    } else {
+                        const vencedorReal = real1 > real2 ? 1 : (real1 < real2 ? 2 : 0);
+                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                    }
+
+                    if (pontosGanhos > 0) {
+                        palpite.pontos_obtidos = pontosGanhos;
+                        palpite.pontuado = true;
+                        houveMudanca = true;
+                    }
+                }
+                pontosTotal += (palpite.pontos_obtidos || 0);
+            });
+
+            if (houveMudanca) {
+                doc.pontos_acumulados = pontosTotal;
+                await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+            }
+        }
+        console.log('✅ Pontuações sincronizadas com sucesso.');
+    } catch (error) {
+        console.error('❌ Erro no Cron Job:', error);
+    }
+});
+
+// =====================================================================
+// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    
-    // 1. Bloqueamos as palavras direto na fonte usando o sinal de menos (-)
-    // Adicionei "aposta" e "apostas" por garantia, já que o alvo são as bets!
-    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -aposta -apostas -1958 -1962 -1970 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022');
-    
-    // 2. Pedimos 15 notícias em vez de 5, para ter "gordura" para filtrar as nulas
+    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -aposta -apostas -1958 -1962 -1970 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022 -neymar');
     const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
         const data = await response.json();
 
-        // 3. Se a API retornou os dados com sucesso, fazemos a faxina dos nulos
         if (data.status === 'ok' && data.articles) {
-            
             const artigosValidos = data.articles.filter(article => {
-                // Mantém apenas os artigos que tem Título, Imagem, Descrição e que não foram removidos pela fonte
                 return article.title && 
                        article.title !== '[Removed]' && 
                        article.urlToImage && 
                        article.description;
             });
-
-            // 4. Cortamos apenas os 5 primeiros artigos válidos para devolver ao Front-end
             data.articles = artigosValidos.slice(0, 5);
         }
-
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
@@ -64,7 +135,7 @@ app.get('/noticias', async (req, res) => {
 });
 
 // =====================================================================
-// 3. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
+// 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
 // =====================================================================
 
 // Salvar Palpites em Lote (Cria ou Atualiza a Cartela)
@@ -85,11 +156,13 @@ app.post('/salvar-lote', async (req, res) => {
     if (existingDoc) {
       let palpitesAtuais = existingDoc.palpites_jogos || [];
 
-      // Mescla os palpites novos com os antigos
       palpites.forEach(novoPalpite => {
         const index = palpitesAtuais.findIndex(p => p.time_1 === novoPalpite.time_1 && p.time_2 === novoPalpite.time_2);
         if (index >= 0) {
-          palpitesAtuais[index] = novoPalpite;
+            // Só permite sobrescrever o palpite se ele AINDA NÃO FOI pontuado pelo Cron Job
+            if (!palpitesAtuais[index].pontuado) {
+                palpitesAtuais[index] = novoPalpite;
+            }
         } else {
           palpitesAtuais.push(novoPalpite);
         }
@@ -99,17 +172,14 @@ app.post('/salvar-lote', async (req, res) => {
       existingDoc.user_name = user_name;
       existingDoc.timestamp = new Date().toISOString();
 
-      await cloudant.putDocument({
-        db: DB_NAME,
-        docId: existingDoc._id,
-        document: existingDoc
-      });
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
       res.status(200).json({ success: true, message: "Cartela atualizada" });
     } else {
       const novoDocumento = {
         type: "cartela_usuario",
         user_email, user_name, 
         palpites_jogos: palpites,
+        pontos_acumulados: 0,
         palpite_final: null,
         timestamp: new Date().toISOString()
       };
@@ -128,10 +198,7 @@ app.post('/salvar-final', async (req, res) => {
     const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
     const searchResponse = await cloudant.postFind({
       db: DB_NAME,
-      selector: {
-        type: { "$eq": "cartela_usuario" },
-        user_email: { "$eq": user_email }
-      }
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
     });
 
     const existingDoc = searchResponse.result.docs[0];
@@ -147,6 +214,7 @@ app.post('/salvar-final', async (req, res) => {
         type: "cartela_usuario",
         user_email, user_name: user_name || user_email.split('@')[0],
         palpites_jogos: [],
+        pontos_acumulados: 0,
         palpite_final: dadosDaFinal,
         timestamp: new Date().toISOString()
       };
@@ -167,20 +235,14 @@ app.get('/ranking', async (req, res) => {
       limit: 2000
     });
 
-    const cartelas = response.result.docs;
-    const rankingArray = cartelas.map(cartela => ({
-        email: cartela.user_email,
-        nome: cartela.user_name,
-        pontos: 0, // A lógica matemática de acertos entra aqui depois
-        totalPalpites: cartela.palpites_jogos ? cartela.palpites_jogos.length : 0
+    const rankingArray = response.result.docs.map(doc => ({
+        email: doc.user_email,
+        nome: doc.user_name,
+        pontos: doc.pontos_acumulados || 0,
+        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0
     }));
 
-    // Ordena: Maior ponto primeiro, desempate por mais palpites feitos
-    rankingArray.sort((a, b) => {
-      if (b.pontos !== a.pontos) return b.pontos - a.pontos;
-      return b.totalPalpites - a.totalPalpites;
-    });
-
+    rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
     res.status(200).json({ success: true, ranking: rankingArray });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
@@ -204,7 +266,7 @@ app.post('/buscar-cartela', async (req, res) => {
 });
 
 // =====================================================================
-// 4. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
+// 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
 // =====================================================================
 
 // Postar mensagem principal
@@ -215,8 +277,8 @@ app.post('/chat', async (req, res) => {
             type: "chat_message",
             user_email, user_name, mensagem,
             timestamp: new Date().toISOString(),
-            likes: [],   // Array para e-mails de quem curtiu
-            replies: []  // Array para os sub-comentários
+            likes: [],  
+            replies: [] 
         };
         await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
         res.status(200).json({ success: true, message: "Mensagem postada!" });
@@ -231,7 +293,7 @@ app.get('/chat', async (req, res) => {
         const response = await cloudant.postFind({
             db: DB_NAME,
             selector: { type: { "$eq": "chat_message" } },
-            limit: 100 // Puxa as 100 mais recentes
+            limit: 100 
         });
         let mensagens = response.result.docs;
         mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -250,11 +312,8 @@ app.post('/chat/like', async (req, res) => {
         if (!doc.likes) doc.likes = [];
         const index = doc.likes.indexOf(user_email);
         
-        if (index > -1) {
-            doc.likes.splice(index, 1); // Remove
-        } else {
-            doc.likes.push(user_email); // Adiciona
-        }
+        if (index > -1) doc.likes.splice(index, 1); 
+        else doc.likes.push(user_email); 
 
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         res.status(200).json({ success: true });
@@ -271,7 +330,6 @@ app.post('/chat/reply', async (req, res) => {
 
         if (!doc.replies) doc.replies = [];
         
-        // Injeta a resposta gerando um ID pseudo-randômico único para ela
         doc.replies.push({
             reply_id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
             user_email, 
@@ -293,18 +351,15 @@ app.post('/chat/reply/like', async (req, res) => {
     try {
         const { msg_id, reply_id, user_email } = req.body;
         const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
         const reply = doc.replies.find(r => r.reply_id === reply_id);
         
         if (reply) {
             if (!reply.likes) reply.likes = [];
             const index = reply.likes.indexOf(user_email);
             
-            if (index > -1) {
-                reply.likes.splice(index, 1); // Remove
-            } else {
-                reply.likes.push(user_email); // Adiciona
-            }
+            if (index > -1) reply.likes.splice(index, 1); 
+            else reply.likes.push(user_email); 
+            
             await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         }
         res.status(200).json({ success: true });
@@ -319,7 +374,6 @@ app.post('/chat/delete', async (req, res) => {
         const { msg_id, user_email } = req.body;
         const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
 
-        // Validação de segurança: só o dono do post pode apagar
         if (doc.user_email === user_email) {
             await cloudant.deleteDocument({
                 db: DB_NAME,
@@ -337,9 +391,9 @@ app.post('/chat/delete', async (req, res) => {
 });
 
 // =====================================================================
-// 5. INICIALIZAÇÃO DO SERVIDOR
+// 6. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Servidor Node.js (Bolão + Proxy + Chat) rodando na porta ${port}`);
+  console.log(`Servidor Node.js (Bolão + Cron + Chat) rodando na porta ${port}`);
 });
