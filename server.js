@@ -61,7 +61,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Calcula pontos a cada 2 horas
 // =====================================================================
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/5 * * * *', async () => {
     console.log('⚽ Verificando resultados na API Football...');
     
     try {
