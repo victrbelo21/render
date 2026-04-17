@@ -109,8 +109,8 @@ cron.schedule('*/2 * * * *', async () => {
             if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
 
             doc.palpites_jogos.forEach(palpite => {
-                const time1Ingles = traduzirTime(palpite.time_1);
-                const time2Ingles = traduzirTime(palpite.time_2);
+                const time1Ingles = traduzirTime(palpite.time_1).toLowerCase();
+                const time2Ingles = traduzirTime(palpite.time_2).toLowerCase();
 
                 console.log(`\n--- 👤 CARTELA DE: ${doc.user_name || doc.user_email} ---`);
                 console.log(`📝 Palpite: [${palpite.time_1}] x [${palpite.time_2}]`);
