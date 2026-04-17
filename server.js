@@ -30,25 +30,56 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
 
-// Dicionário de Tradução (Sem acentos, pois nossa função limpa tudo)
+// Dicionário Oficial - Copa do Mundo 2026 (Sem acentos do lado esquerdo)
 const dicionarioTimes = {
-    "brasil": "brazil",
+    "africa do sul": "south africa",
     "alemanha": "germany",
-    "espanha": "spain",
-    "franca": "france",
-    "inglaterra": "england",
-    "holanda": "netherlands",
-    "estados unidos": "barcelona", // Mantido para seus testes atuais da Champions
-    "coreia do sul": "south korea",
-    "japao": "japan",
-    "camaroes": "cameroon",
-    "suica": "switzerland",
-    "servia": "serbia",
-    "croacia": "croatia",
-    "marrocos": "morocco",
-    "africa do sul": "arsenal fc", // Mantido para seus testes atuais
-    "mexico": "athletic club", // Mantido para seus testes atuais
+    "arabia saudita": "saudi arabia",
+    "argelia": "algeria",
     "argentina": "argentina",
+    "australia": "australia",
+    "austria": "austria",
+    "belgica": "belgium",
+    "bosnia e herzegovina": "bosnia and herzegovina",
+    "brasil": "brazil",
+    "cabo verde": "cape verde",
+    "canada": "canada",
+    "catar": "qatar",
+    "colombia": "colombia",
+    "costa do marfim": "cote divoire", // football-data usa "Côte d'Ivoire", nossa função limpa para "cote divoire"
+    "croacia": "croatia",
+    "curacau": "curacao",
+    "egito": "egypt",
+    "equador": "ecuador",
+    "escocia": "scotland",
+    "espanha": "spain",
+    "estados unidos": "united states",
+    "franca": "france",
+    "gana": "ghana",
+    "haiti": "haiti",
+    "holanda": "netherlands",
+    "inglaterra": "england",
+    "ira": "iran",
+    "iraque": "iraq",
+    "japao": "japan",
+    "jordania": "jordan",
+    "marrocos": "morocco",
+    "mexico": "mexico",
+    "noruega": "norway",
+    "nova zelandia": "new zealand",
+    "panama": "panama",
+    "paraguai": "paraguay",
+    "portugal": "portugal",
+    "rep da coreia": "south korea",
+    "rep dem do congo": "dr congo",
+    "rep tcheca": "czech republic",
+    "senegal": "senegal",
+    "suecia": "sweden",
+    "suica": "switzerland",
+    "tunisia": "tunisia",
+    "turquia": "turkey",
+    "uruguai": "uruguay",
+    "uzbequistao": "uzbekistan"
 };
 
 // =====================================================================
@@ -69,7 +100,6 @@ function traduzirTime(nomeBR) {
     return dicionarioTimes[nomeLimpo] || nomeLimpo; 
 }
 
-// Extrai e padroniza a data para YYYY-MM-DD, aceitando o formato em Português do seu site
 function formatarDataISO(dataString) {
     if (!dataString) return null;
     
@@ -106,7 +136,7 @@ function formatarDataISO(dataString) {
         }
     }
     
-    // 3. Se já vier como ISO padrão da API (ex: 2026-06-15T19:00:00Z)
+    // 3. Se já vier como ISO padrão da API
     if (dataString.length >= 10) {
         return dataString.substring(0, 10);
     }
@@ -117,12 +147,12 @@ function formatarDataISO(dataString) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
-cron.schedule('*/45 * * * *', async () => {
-    console.log('⚽ Verificando e recalculando resultados (Football-Data.org)...');
+cron.schedule('*/10 * * * *', async () => {
+    console.log('⚽ Verificando e recalculando resultados (World Cup)...');
     
     try {
-        // ATENÇÃO: Está 'CL' (Champions) para testes. Quando for a Copa, troque 'CL' por 'WC'
-        const response = await fetch(`https://api.football-data.org/v4/competitions/CL/matches?status=FINISHED`, {
+        // Alterado para WC (World Cup)
+        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
@@ -134,15 +164,6 @@ cron.schedule('*/45 * * * *', async () => {
         }
         
         const jogosOficiais = data.matches || [];
-
-      // --- ADICIONE ESTE BLOCO AQUI ---
-        if (jogosOficiais.length > 0) {
-            console.log(`\n--- 🕵️ GABARITO PARA O SEU TESTE ---`);
-            console.log(`Coloque no site -> Data: ${formatarDataISO(jogosOficiais[0].utcDate)}`);
-            console.log(`Mandante: ${jogosOficiais[0].homeTeam.name} | Visitante: ${jogosOficiais[0].awayTeam.name}`);
-            console.log(`Placar que você deve apostar: ${jogosOficiais[0].score.fullTime.home} x ${jogosOficiais[0].score.fullTime.away}`);
-            console.log(`-----------------------------------\n`);
-        }
 
         if (jogosOficiais.length === 0) {
             console.log('Nenhum jogo novo finalizado no momento.');
@@ -156,7 +177,6 @@ cron.schedule('*/45 * * * *', async () => {
         });
 
         const cartelas = userDocs.result.docs;
-        console.log(`📂 Recalculando ${cartelas.length} cartelas de usuários...`);
 
         for (let doc of cartelas) {
             let pontosTotalCalculado = 0;
@@ -177,22 +197,30 @@ cron.schedule('*/45 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
-                    // Trava 1: Verificação de Data
+                    // Trava de Data
                     const bateuData = dataPalpite ? (dataPalpite === dataAPI) : true;
 
-                    // Trava 2: Ordem Estrita de Nomes (Mandante x Visitante)
+                    // Lógica Bi-direcional (Permite inverter Casa/Fora)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
 
-                    if (bateuData && ordemExata) {
-                        placarReal1 = j.score.fullTime.home;
-                        placarReal2 = j.score.fullTime.away;
-                        return true;
+                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
+                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
+
+                    if (bateuData) {
+                        if (ordemExata) {
+                            placarReal1 = j.score.fullTime.home;
+                            placarReal2 = j.score.fullTime.away;
+                            return true;
+                        } else if (ordemInvertida) {
+                            placarReal1 = j.score.fullTime.away;
+                            placarReal2 = j.score.fullTime.home;
+                            return true;
+                        }
                     }
                     return false;
                 });
 
-                // Se encontrou o jogo, recalcula os pontos independente de já ter sido pontuado
                 if (jogoOficial) {
                     const palpite1 = palpite.placar_1;
                     const palpite2 = palpite.placar_2;
@@ -207,7 +235,6 @@ cron.schedule('*/45 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    // Verifica se a pontuação atualizou
                     if (palpite.pontos_obtidos !== pontosGanhos) {
                         palpite.pontos_obtidos = pontosGanhos;
                         houveMudancaInterna = true;
@@ -217,14 +244,11 @@ cron.schedule('*/45 * * * *', async () => {
                 pontosTotalCalculado += (palpite.pontos_obtidos || 0);
             });
 
-            // Salva no banco caso alguma pontuação tenha mudado
             if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
                 doc.pontos_acumulados = pontosTotalCalculado;
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             }
         }
-        
-        console.log('✅ Recálculo contínuo finalizado com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
     }
@@ -262,7 +286,6 @@ app.get('/noticias', async (req, res) => {
 // 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
 // =====================================================================
 
-// Salvar Palpites em Lote (Cria ou Atualiza a Cartela)
 app.post('/salvar-lote', async (req, res) => {
   try {
     const { user_email, user_name, palpites } = req.body;
@@ -278,7 +301,6 @@ app.post('/salvar-lote', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
 
     if (existingDoc) {
-      // Atualiza a cartela inteira sempre (o cron cuida do recálculo)
       existingDoc.palpites_jogos = palpites;
       existingDoc.user_name = user_name;
       existingDoc.timestamp = new Date().toISOString();
@@ -303,7 +325,6 @@ app.post('/salvar-lote', async (req, res) => {
   }
 });
 
-// Salvar Palpite da Final
 app.post('/salvar-final', async (req, res) => {
   try {
     const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
@@ -337,7 +358,6 @@ app.post('/salvar-final', async (req, res) => {
   }
 });
 
-// Gerar o Ranking Geral
 app.get('/ranking', async (req, res) => {
   try {
     const response = await cloudant.postFind({
@@ -360,7 +380,6 @@ app.get('/ranking', async (req, res) => {
   }
 });
 
-// Buscar cartela de um usuário para Auto-Preenchimento
 app.post('/buscar-cartela', async (req, res) => {
   try {
     const { user_email } = req.body;
@@ -380,7 +399,6 @@ app.post('/buscar-cartela', async (req, res) => {
 // 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
 // =====================================================================
 
-// Postar mensagem principal
 app.post('/chat', async (req, res) => {
     try {
         const { user_email, user_name, mensagem } = req.body;
@@ -398,7 +416,6 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Buscar feed de mensagens
 app.get('/chat', async (req, res) => {
     try {
         const response = await cloudant.postFind({
@@ -414,7 +431,6 @@ app.get('/chat', async (req, res) => {
     }
 });
 
-// Curtir / Descurtir Mensagem Principal (Toggle)
 app.post('/chat/like', async (req, res) => {
     try {
         const { msg_id, user_email } = req.body;
@@ -433,7 +449,6 @@ app.post('/chat/like', async (req, res) => {
     }
 });
 
-// Postar uma Resposta (Reply)
 app.post('/chat/reply', async (req, res) => {
     try {
         const { msg_id, user_email, user_name, mensagem } = req.body;
@@ -457,7 +472,6 @@ app.post('/chat/reply', async (req, res) => {
     }
 });
 
-// Curtir / Descurtir uma Resposta (Reply Like Toggle)
 app.post('/chat/reply/like', async (req, res) => {
     try {
         const { msg_id, reply_id, user_email } = req.body;
@@ -479,7 +493,6 @@ app.post('/chat/reply/like', async (req, res) => {
     }
 });
 
-// Apagar um Post Principal
 app.post('/chat/delete', async (req, res) => {
     try {
         const { msg_id, user_email } = req.body;
