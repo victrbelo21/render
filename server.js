@@ -46,8 +46,8 @@ const dicionarioTimes = {
     "servia": "serbia",
     "croacia": "croatia",
     "marrocos": "morocco",
-    "africa do sul": "fc barcelona", // Mantido para seus testes atuais
-    "mexico": "paris saint germain fc", // Mantido para seus testes atuais
+    "africa do sul": "arsenal fc", // Mantido para seus testes atuais
+    "mexico": "athletic club", // Mantido para seus testes atuais
     "argentina": "argentina",
 };
 
