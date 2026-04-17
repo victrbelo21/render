@@ -39,7 +39,6 @@ const dicionarioTimes = {
     "frança": "france",
     "inglaterra": "england",
     "holanda": "netherlands",
-    "eua": "usa",
     "estados unidos": "barcelona",
     "coreia do sul": "south korea",
     "japão": "japan",
@@ -48,9 +47,8 @@ const dicionarioTimes = {
     "sérvia": "serbia",
     "croácia": "croatia",
     "marrocos": "morocco",
-    "arábia saudita": "saudi arabia",
-    "México": "paris",
-    "África do Sul": "barcelona",
+    "arábia saudita": "FC Barcelona",
+    "méxico": "Paris Saint-Germain FC"
     "argentina": "argentina"
 };
 
@@ -66,7 +64,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/45 * * * *', async () => {
+cron.schedule('*/2 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
