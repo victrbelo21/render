@@ -64,7 +64,7 @@ function traduzirTime(nomeBR) {
 // =====================================================================
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Roda a cada 10 minutos
 // =====================================================================
-cron.schedule('*/45 * * * *', async () => {
+cron.schedule('*/2 * * * *', async () => {
     console.log('⚽ Verificando resultados na Football-Data.org...');
     
     try {
@@ -94,91 +94,43 @@ cron.schedule('*/45 * * * *', async () => {
             selector: { type: { "$eq": "cartela_usuario" } }
         });
 
+        // ... (logo abaixo de const jogosOficiais = data.matches || [];)
+
+        // 1. Pedindo TODAS as cartelas sem limite do banco
+        const userDocs = await cloudant.postFind({
+            db: DB_NAME,
+            selector: { type: { "$eq": "cartela_usuario" } },
+            limit: 2000 // <--- O SEGREDO ESTAVA AQUI!
+        });
+
         const cartelas = userDocs.result.docs;
+        
+        // Vai avisar no log quantos usuários achou no total
+        console.log(`📂 Encontramos ${cartelas.length} cartelas de usuários no banco.`);
 
         for (let doc of cartelas) {
             let pontosTotal = 0;
             let houveMudanca = false;
 
-            if (!doc.palpites_jogos) continue;
+            // Se o usuário ainda não fez nenhum palpite, pula pra próxima pessoa
+            if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
 
             doc.palpites_jogos.forEach(palpite => {
-                // 1. Traduz os times do palpite para inglês
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
 
                 // =======================================================
-                // 🕵️ RAIO-X MÁXIMO (Adicione este bloco aqui!)
+                // 🕵️ RAIO-X TURBINADO (Com nome do usuário)
                 // =======================================================
-                console.log(`\n--- 🔍 INSPECIONANDO CARTELA ---`);
-                console.log(`📝 O que veio do seu site: [${palpite.time_1}] x [${palpite.time_2}]`);
-                console.log(`🗣️ Como o Dicionário leu: [${time1Ingles}] x [${time2Ingles}]`);
-                console.log(`⚽ O que a API da Football-Data respondeu hoje:`);
-                jogosOficiais.forEach(j => {
-                    console.log(`   -> [${j.homeTeam.name}] x [${j.awayTeam.name}]`);
-                });
-                console.log(`--------------------------------\n`);
+                console.log(`\n--- 👤 CARTELA DE: ${doc.user_name || doc.user_email} ---`);
+                console.log(`📝 Palpite: [${palpite.time_1}] x [${palpite.time_2}]`);
+                console.log(`🗣️ Traduzido para: [${time1Ingles}] x [${time2Ingles}]`);
                 // =======================================================
 
                 let placarReal1 = null;
                 let placarReal2 = null;
 
-                // 2. Faz a busca super-inteligente (Lê nas duas direções)
-                const jogoOficial = jogosOficiais.find(j => {
-                    const home = j.homeTeam.name.toLowerCase();
-                    const away = j.awayTeam.name.toLowerCase();
-
-                    // Cenário A: A ordem da API é igual a do usuário
-                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
-                                       (away.includes(time2Ingles) || time2Ingles.includes(away));
-
-                    // Cenário B: A ordem da API está invertida (Time 2 em casa, Time 1 fora)
-                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
-                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
-
-                    if (ordemExata) {
-                        placarReal1 = j.score.fullTime.home;
-                        placarReal2 = j.score.fullTime.away;
-                        return true;
-                    } else if (ordemInvertida) {
-                        // Se a API inverteu os times, nós invertemos a ordem dos gols para não punir o usuário!
-                        placarReal1 = j.score.fullTime.away;
-                        placarReal2 = j.score.fullTime.home;
-                        return true;
-                    }
-                    return false;
-                });
-
-                if (jogoOficial && !palpite.pontuado) {
-                    const palpite1 = palpite.placar_1;
-                    const palpite2 = palpite.placar_2;
-
-                    let pontosGanhos = 0;
-
-                    // Lógica de pontos: 5 pra mosca, 2 pro vencedor
-                    if (palpite1 === placarReal1 && palpite2 === placarReal2) {
-                        pontosGanhos = 5; 
-                    } else {
-                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
-                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
-                    }
-
-                    if (pontosGanhos > 0) {
-                        palpite.pontos_obtidos = pontosGanhos;
-                        palpite.pontuado = true;
-                        houveMudanca = true;
-                    }
-                }
-                
-                pontosTotal += (palpite.pontos_obtidos || 0);
-            });
-
-            if (houveMudanca) {
-                doc.pontos_acumulados = pontosTotal;
-                await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-            }
-        }
+                // ... (daqui pra baixo continua a lógica bi-direcional que já fizemos)
         console.log('✅ Pontuações sincronizadas com sucesso!');
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
