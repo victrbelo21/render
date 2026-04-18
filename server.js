@@ -370,7 +370,9 @@ app.get('/ranking', async (req, res) => {
         email: doc.user_email,
         nome: doc.user_name,
         pontos: doc.pontos_acumulados || 0,
-        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0
+        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
+        time_coracao: doc.time_coracao || '', 
+        recorde_embaixadinha: doc.recorde_embaixadinha || 0 
     }));
 
     rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
