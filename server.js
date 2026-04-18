@@ -396,6 +396,43 @@ app.post('/buscar-cartela', async (req, res) => {
 });
 
 // =====================================================================
+// ROTAS DO PERFIL (Salvar Time do Coração e Embaixadinhas)
+// =====================================================================
+app.post('/atualizar-perfil', async (req, res) => {
+  try {
+    const { user_email, time_coracao, recorde_embaixadinha } = req.body;
+    
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+
+    if (existingDoc) {
+      // Atualiza apenas se o dado foi enviado pelo site
+      if (time_coracao !== undefined && time_coracao !== "") {
+          existingDoc.time_coracao = time_coracao;
+      }
+      if (recorde_embaixadinha !== undefined) {
+          // Só atualiza se o recorde novo for maior que o antigo salvo no banco
+          if (!existingDoc.recorde_embaixadinha || recorde_embaixadinha > existingDoc.recorde_embaixadinha) {
+              existingDoc.recorde_embaixadinha = recorde_embaixadinha;
+          }
+      }
+      
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Perfil atualizado!" });
+    } else {
+      res.status(404).json({ success: false, error: 'Usuário não encontrado. Crie um palpite primeiro.' });
+    }
+  } catch (error) {
+    console.error("Erro ao atualizar perfil:", error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
+// =====================================================================
 // 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
 // =====================================================================
 
