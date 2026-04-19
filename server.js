@@ -553,6 +553,41 @@ app.post('/chat/delete', async (req, res) => {
     }
 });
 
+app.post('/chat/reply/delete', async (req, res) => {
+    try {
+        const { msg_id, reply_id, user_email } = req.body;
+        
+        // Pega o post original
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        if (!doc.replies) {
+            return res.status(404).json({ success: false, error: 'Nenhuma resposta encontrada' });
+        }
+
+        // Acha o índice da resposta específica
+        const replyIndex = doc.replies.findIndex(r => r.reply_id === reply_id);
+        
+        if (replyIndex === -1) {
+            return res.status(404).json({ success: false, error: 'Resposta não encontrada' });
+        }
+
+        // Verifica se o usuário logado é o dono da resposta
+        if (doc.replies[replyIndex].user_email === user_email) {
+            // Remove a resposta da array
+            doc.replies.splice(replyIndex, 1);
+
+            // Atualiza o documento no banco de dados
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+            res.status(200).json({ success: true });
+        } else {
+            res.status(403).json({ success: false, error: 'Não autorizado' });
+        }
+    } catch (error) {
+        console.error("Erro ao apagar resposta:", error);
+        res.status(500).json({ success: false, error: 'Erro ao apagar resposta' });
+    }
+});
+
 // =====================================================================
 // 6. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
