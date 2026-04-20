@@ -265,7 +265,7 @@ app.get('/noticias', async (req, res) => {
     
     // Removemos o parâmetro &from=...
     // A API gratuita vai buscar automaticamente dentro da janela máxima permitida dela.
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt,es&sortBy=publishedAt&pageSize=40&apiKey=${API_KEY}`;
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=40&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
