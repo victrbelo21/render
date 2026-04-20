@@ -255,17 +255,13 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros)
+// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
     
-    // Sem aspas! Apenas palavras soltas. A API entende isso muito melhor.
-    const query = encodeURIComponent('Copa Mundo 2026 FIFA');
-    
-    // Removemos o parâmetro &from=...
-    // A API gratuita vai buscar automaticamente dentro da janela máxima permitida dela.
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=40&apiKey=${API_KEY}`;
+    const query = encodeURIComponent('Copa do Mundo FIFA 2026');
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
@@ -275,26 +271,61 @@ app.get('/noticias', async (req, res) => {
 
         if (data.status === 'ok' && data.articles && data.articles.length > 0) {
             
-            // O nosso backend faz o trabalho pesado de limpar o que a API trouxe
-            const artigosValidos = data.articles.filter(article => {
+            // 1. AS LISTAS NEGRAS (BLACKLISTS)
+            const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
+            const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
+            const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
+            const proibidoOutrosEsportes = ['basquete', 'vôlei', 'tênis', 'futsal', 'rugby', 'fórmula 1', 'esports', 'ginástica', 'olimpíadas'];
+            const proibidoTimesBR = ['flamengo', 'corinthians', 'palmeiras', 'são paulo', 'vasco', 'santos', 'cruzeiro', 'atlético-mg', 'grêmio', 'internacional', 'botafogo', 'fluminense', 'brasileirão', 'libertadores'];
+            const proibidoPolitica = ['lula', 'bolsonaro', 'congresso', 'stf', 'eleição', 'política', 'governo', 'deputado'];
+
+            // Função auxiliar para checar se alguma palavra da lista está no texto
+            const temPalavra = (texto, lista) => lista.some(palavra => texto.includes(palavra));
+
+            // 2. FILTRAGEM DE PENTE FINO
+            let artigosValidos = data.articles.filter(article => {
                 const titulo = article.title ? article.title.toLowerCase() : '';
                 const desc = article.description ? article.description.toLowerCase() : '';
+                const textoCompleto = `${titulo} ${desc}`; // Junta os dois para procurar de uma vez
                 
-                // Garante que não é notícia removida e tem imagem
+                // Validação Básica
                 const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
                 
-                // Filtra cassino/apostas
-                const semLixo = !titulo.includes('casino') && !titulo.includes('aposta') && !titulo.includes('bet');
-                
-                // Garante que o assunto principal não se perdeu
-                const falaDeCopa = titulo.includes('copa') || titulo.includes('mundial') || titulo.includes('fifa') || desc.includes('copa');
+                // Validação de Tema (Deve ter a ver com copa)
+                const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
 
-                return basicoOk && semLixo && falaDeCopa;
+                // Verificando as Blacklists
+                const isAposta = temPalavra(textoCompleto, proibidoApostas);
+                const isFeminino = temPalavra(textoCompleto, proibidoFeminino);
+                const isOutroAno = temPalavra(textoCompleto, proibidoOutrosAnos);
+                const isOutroEsporte = temPalavra(textoCompleto, proibidoOutrosEsportes);
+                const isTimeBR = temPalavra(textoCompleto, proibidoTimesBR);
+                const isPolitica = temPalavra(textoCompleto, proibidoPolitica);
+
+                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em nenhuma blacklist
+                return basicoOk && falaDeCopa && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
             });
             
             if (artigosValidos.length > 0) {
-                // Embaralha para dar frescor à página e corta os 5 primeiros
-                data.articles = artigosValidos.sort(() => 0.5 - Math.random()).slice(0, 5);
+                // 3. PRIORIZAÇÃO DE SITES GRANDES (Globo, ESPN, CNN, Terra)
+                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn', 'terra'];
+
+                artigosValidos.forEach(article => {
+                    const sourceName = article.source?.name?.toLowerCase() || '';
+                    const articleUrl = article.url?.toLowerCase() || '';
+                    
+                    // Checa se o site da notícia é um dos nossos sites Premium
+                    const isPremium = sitesPremium.some(site => sourceName.includes(site) || articleUrl.includes(site));
+                    
+                    // Dá uma nota aleatória de 0 a 1. Mas se for Premium, ganha 10 pontos a mais!
+                    article.score = Math.random() + (isPremium ? 10 : 0);
+                });
+
+                // Ordena do maior score (Premium) para o menor (Sites normais)
+                artigosValidos.sort((a, b) => b.score - a.score);
+
+                // Corta os 5 primeiros
+                data.articles = artigosValidos.slice(0, 5);
             } else {
                 data.articles = []; 
             }
