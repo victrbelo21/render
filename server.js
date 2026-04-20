@@ -260,38 +260,51 @@ cron.schedule('*/10 * * * *', async () => {
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
     
-    // Agora busca tanto "Copa do Mundo" (PT) quanto "Mundial" (ES)
-    const query = encodeURIComponent('("Copa do Mundo FIFA 2026") -bets -bet -time -apuesta -apuestas -aposta -apostas');
+    // Sem aspas! Apenas palavras soltas. A API entende isso muito melhor.
+    const query = encodeURIComponent('Copa Mundo 2026 FIFA');
     
-    // Pega a data de ontem para forçar notícias super recentes
-    const ontem = new Date();
-    ontem.setDate(ontem.getDate() - 20); // 2 dias de margem
-    const fromDate = ontem.toISOString().split('T')[0];
-
-    // Adicionado os parâmetros 'from' (data) e 'language=pt,es'
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt,es&from=${fromDate}&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
+    // Removemos o parâmetro &from=...
+    // A API gratuita vai buscar automaticamente dentro da janela máxima permitida dela.
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt,es&sortBy=publishedAt&pageSize=40&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
         const data = await response.json();
 
-      // 🚨 Isso vai aparecer no LOG do Render para te ajudar a debugar
         console.log("Status NewsAPI:", data.status, "| Total Encontrado:", data.totalResults);
 
-        if (data.status === 'ok' && data.articles) {
+        if (data.status === 'ok' && data.articles && data.articles.length > 0) {
+            
+            // O nosso backend faz o trabalho pesado de limpar o que a API trouxe
             const artigosValidos = data.articles.filter(article => {
-                return article.title && 
-                       article.title !== '[Removed]' && 
-                       article.urlToImage && 
-                       article.description;
+                const titulo = article.title ? article.title.toLowerCase() : '';
+                const desc = article.description ? article.description.toLowerCase() : '';
+                
+                // Garante que não é notícia removida e tem imagem
+                const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
+                
+                // Filtra cassino/apostas
+                const semLixo = !titulo.includes('casino') && !titulo.includes('aposta') && !titulo.includes('bet');
+                
+                // Garante que o assunto principal não se perdeu
+                const falaDeCopa = titulo.includes('copa') || titulo.includes('mundial') || titulo.includes('fifa') || desc.includes('copa');
+
+                return basicoOk && semLixo && falaDeCopa;
             });
-            // Embaralha para tentar dar uma rotacionada sempre que alguém carregar a página
-            data.articles = artigosValidos.sort(() => 0.5 - Math.random()).slice(0, 5);
+            
+            if (artigosValidos.length > 0) {
+                // Embaralha para dar frescor à página e corta os 5 primeiros
+                data.articles = artigosValidos.sort(() => 0.5 - Math.random()).slice(0, 5);
+            } else {
+                data.articles = []; 
+            }
+        } else {
+            data.articles = []; 
         }
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
-        res.status(500).json({ status: "error", message: "Falha ao buscar notícias" });
+        res.status(500).json({ status: "error", message: "Falha interna ao buscar notícias" });
     }
 });
 
