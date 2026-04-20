@@ -265,7 +265,7 @@ app.get('/noticias', async (req, res) => {
     
     // Pega a data de ontem para forçar notícias super recentes
     const ontem = new Date();
-    ontem.setDate(ontem.getDate() - 10); // 2 dias de margem
+    ontem.setDate(ontem.getDate() - 50); // 2 dias de margem
     const fromDate = ontem.toISOString().split('T')[0];
 
     // Adicionado os parâmetros 'from' (data) e 'language=pt,es'
