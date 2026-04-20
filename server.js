@@ -272,6 +272,7 @@ app.get('/noticias', async (req, res) => {
         if (data.status === 'ok' && data.articles && data.articles.length > 0) {
             
             // 1. AS LISTAS NEGRAS (BLACKLISTS)
+            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles']; // Nova lista de bloqueio de fontes
             const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
             const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
             const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
@@ -286,7 +287,10 @@ app.get('/noticias', async (req, res) => {
             let artigosValidos = data.articles.filter(article => {
                 const titulo = article.title ? article.title.toLowerCase() : '';
                 const desc = article.description ? article.description.toLowerCase() : '';
-                const textoCompleto = `${titulo} ${desc}`; // Junta os dois para procurar de uma vez
+                const textoCompleto = `${titulo} ${desc}`; 
+                
+                const sourceName = article.source?.name?.toLowerCase() || '';
+                const articleUrl = article.url?.toLowerCase() || '';
                 
                 // Validação Básica
                 const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
@@ -295,6 +299,7 @@ app.get('/noticias', async (req, res) => {
                 const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
 
                 // Verificando as Blacklists
+                const isSiteProibido = proibidoSites.some(site => sourceName.includes(site) || articleUrl.includes(site));
                 const isAposta = temPalavra(textoCompleto, proibidoApostas);
                 const isFeminino = temPalavra(textoCompleto, proibidoFeminino);
                 const isOutroAno = temPalavra(textoCompleto, proibidoOutrosAnos);
@@ -302,29 +307,24 @@ app.get('/noticias', async (req, res) => {
                 const isTimeBR = temPalavra(textoCompleto, proibidoTimesBR);
                 const isPolitica = temPalavra(textoCompleto, proibidoPolitica);
 
-                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em nenhuma blacklist
-                return basicoOk && falaDeCopa && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
+                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em NENHUMA blacklist
+                return basicoOk && falaDeCopa && !isSiteProibido && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
             });
             
             if (artigosValidos.length > 0) {
-                // 3. PRIORIZAÇÃO DE SITES GRANDES (Globo, ESPN, CNN, Terra)
-                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn', 'terra'];
+                // 3. PRIORIZAÇÃO DE SITES GRANDES (Terra foi removido daqui)
+                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn'];
 
                 artigosValidos.forEach(article => {
                     const sourceName = article.source?.name?.toLowerCase() || '';
                     const articleUrl = article.url?.toLowerCase() || '';
                     
-                    // Checa se o site da notícia é um dos nossos sites Premium
                     const isPremium = sitesPremium.some(site => sourceName.includes(site) || articleUrl.includes(site));
                     
-                    // Dá uma nota aleatória de 0 a 1. Mas se for Premium, ganha 10 pontos a mais!
                     article.score = Math.random() + (isPremium ? 10 : 0);
                 });
 
-                // Ordena do maior score (Premium) para o menor (Sites normais)
                 artigosValidos.sort((a, b) => b.score - a.score);
-
-                // Corta os 5 primeiros
                 data.articles = artigosValidos.slice(0, 5);
             } else {
                 data.articles = []; 
