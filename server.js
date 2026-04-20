@@ -261,7 +261,7 @@ app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
     
     // Agora busca tanto "Copa do Mundo" (PT) quanto "Mundial" (ES)
-    const query = encodeURIComponent('("Copa do Mundo FIFA 2026" OR "Mundial FIFA 2026") -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -apuesta -apuestas -aposta -apostas');
+    const query = encodeURIComponent('("Copa do Mundo FIFA 2026" OR "Mundial FIFA 2026") -bets -bet -time -apuesta -apuestas -aposta -apostas');
     
     // Pega a data de ontem para forçar notícias super recentes
     const ontem = new Date();
