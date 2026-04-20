@@ -261,11 +261,11 @@ app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
     
     // Agora busca tanto "Copa do Mundo" (PT) quanto "Mundial" (ES)
-    const query = encodeURIComponent('("Copa do Mundo FIFA 2026" OR "Mundial FIFA 2026") -bets -bet -time -apuesta -apuestas -aposta -apostas');
+    const query = encodeURIComponent('("Copa do Mundo FIFA 2026") -bets -bet -time -apuesta -apuestas -aposta -apostas');
     
     // Pega a data de ontem para forçar notícias super recentes
     const ontem = new Date();
-    ontem.setDate(ontem.getDate() - 50); // 2 dias de margem
+    ontem.setDate(ontem.getDate() - 20); // 2 dias de margem
     const fromDate = ontem.toISOString().split('T')[0];
 
     // Adicionado os parâmetros 'from' (data) e 'language=pt,es'
@@ -274,6 +274,9 @@ app.get('/noticias', async (req, res) => {
     try {
         const response = await fetch(url);
         const data = await response.json();
+
+      // 🚨 Isso vai aparecer no LOG do Render para te ajudar a debugar
+        console.log("Status NewsAPI:", data.status, "| Total Encontrado:", data.totalResults);
 
         if (data.status === 'ok' && data.articles) {
             const artigosValidos = data.articles.filter(article => {
