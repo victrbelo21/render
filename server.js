@@ -259,8 +259,17 @@ cron.schedule('*/10 * * * *', async () => {
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    const query = encodeURIComponent('"Copa do Mundo FIFA 2026" -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -aposta -apostas -1958 -1962 -1970 -1994 -1998 -2002 -2006 -2010 -2014 -2018 -2022 -neymar');
-    const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
+    
+    // Agora busca tanto "Copa do Mundo" (PT) quanto "Mundial" (ES)
+    const query = encodeURIComponent('("Copa do Mundo FIFA 2026" OR "Mundial FIFA 2026") -bets -bet -boca -bayern -santos -corinthians -palmeiras -time -apuesta -apuestas -aposta -apostas');
+    
+    // Pega a data de ontem para forçar notícias super recentes
+    const ontem = new Date();
+    ontem.setDate(ontem.getDate() - 2); // 2 dias de margem
+    const fromDate = ontem.toISOString().split('T')[0];
+
+    // Adicionado os parâmetros 'from' (data) e 'language=pt,es'
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt,es&from=${fromDate}&sortBy=publishedAt&pageSize=15&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
@@ -273,7 +282,8 @@ app.get('/noticias', async (req, res) => {
                        article.urlToImage && 
                        article.description;
             });
-            data.articles = artigosValidos.slice(0, 5);
+            // Embaralha para tentar dar uma rotacionada sempre que alguém carregar a página
+            data.articles = artigosValidos.sort(() => 0.5 - Math.random()).slice(0, 5);
         }
         res.json(data);
     } catch (error) {
