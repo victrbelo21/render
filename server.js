@@ -272,7 +272,7 @@ app.get('/noticias', async (req, res) => {
         if (data.status === 'ok' && data.articles && data.articles.length > 0) {
             
             // 1. AS LISTAS NEGRAS (BLACKLISTS)
-            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles']; // Nova lista de bloqueio de fontes
+            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles', 'diariodocentrodomundo']; // Nova lista de bloqueio de fontes
             const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
             const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
             const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
