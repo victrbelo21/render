@@ -506,7 +506,7 @@ app.post('/agente-bolao', async (req, res) => {
         
         // Se por algum motivo a variável não estiver lá, o servidor avisa:
         if (!agenteEndpoint) {
-            console.error("ERRO: A variável ICA_AGENT_URL não foi configurada no Render!");
+            console.error("ERRO: A variável ICA_AGENT_URL não foi configurada no Renderrrr!");
             return res.status(500).json({ error: "Configuração do agente ausente." });
         }
 
