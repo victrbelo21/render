@@ -498,36 +498,22 @@ app.post('/atualizar-perfil', async (req, res) => {
 // ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - Com Memória de Contexto)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
-    // Agora recebemos também o "historico"
     const { mensagem, historico } = req.body;
-    
-    if (!mensagem) {
-        return res.status(400).json({ error: "Mensagem vazia." });
-    }
 
     try {
-        const agenteEndpoint = 'https://servicesessentials.ibm.com/agenticapps/a2a/61504138-6c1c-47fe-a774-05ba9b829b6c/agents/19469445-9226-4e9c-a450-142f3403806d'; 
+        // Substitua a URL fixa por esta linha abaixo:
+        const agenteEndpoint = process.env.ICA_AGENT_URL; 
         
-        // --- MÁGICA DA MEMÓRIA AQUI ---
-        let promptFinal = mensagem;
-        
-        if (historico && historico.length > 0) {
-            let contexto = "Histórico recente da nossa conversa para você ter contexto:\n";
-            historico.forEach(msg => {
-                contexto += `${msg.role === 'user' ? 'Usuário' : 'Você (Especialista)'}: ${msg.content}\n`;
-            });
-            contexto += `\nAgora, responda a esta nova pergunta do usuário levando o histórico acima em consideração:\nNova Pergunta: ${mensagem}`;
-            
-            promptFinal = contexto;
+        // Se por algum motivo a variável não estiver lá, o servidor avisa:
+        if (!agenteEndpoint) {
+            console.error("ERRO: A variável ICA_AGENT_URL não foi configurada no Render!");
+            return res.status(500).json({ error: "Configuração do agente ausente." });
         }
-        // ------------------------------
 
         const rpcPayload = {
             jsonrpc: "2.0",
             method: "message/send", 
-            params: {
-                message: promptFinal // Mandamos o pacotão com a memória
-            },
+            params: { message: mensagem }, // (ou o prompt com memória que montamos)
             id: 1 
         };
 
