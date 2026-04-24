@@ -23,68 +23,65 @@ const mcpServer = new Server({
     name: "bolao-mcp-server",
     version: "1.0.0"
 }, {
-    capabilities: {
-        tools: {}
-    }
+    capabilities: { tools: {} }
 });
 
-// Registro da ferramenta no catálogo da IBM
+// Registro da ferramenta
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
         tools: [
             {
                 name: "get_latest_news_headlines",
-                description: "Busca as manchetes mais recentes sobre a Copa 2026 filtradas pelo seu servidor.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        limit: { type: "number", description: "Quantidade de notícias (máx 5)" }
-                    }
-                }
+                description: "Busca as manchetes mais recentes sobre a Copa 2026.",
+                inputSchema: { type: "object", properties: {} }
             }
         ]
     };
 });
 
-// Execução da ferramenta quando a IA solicitar
+// Execução da ferramenta - Simplificada para evitar erro de loop
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (request.params.name === "get_latest_news_headlines") {
         try {
-            // Chamada interna para a sua própria rota de notícias
-            const baseUrl = process.env.RENDER_EXTERNAL_HOSTNAME 
-                ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` 
-                : `http://localhost:${process.env.PORT || 8080}`;
-                
-            const newsResponse = await fetch(`${baseUrl}/noticias`);
-            const newsData = await newsResponse.json();
+            // Em vez de dar fetch em si mesmo (que pode dar 502), chamamos a função de notícias direto
+            const API_KEY = '99f3722bea4049eea78883baeada90cd';
+            const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
+            const response = await fetch(url);
+            const data = await response.json();
             
-            const textoNoticias = newsData.articles && newsData.articles.length > 0
-                ? newsData.articles.map(a => `- ${a.title}`).join('\n')
-                : "Nenhuma notícia relevante encontrada no momento.";
+            const textoNoticias = data.articles && data.articles.length > 0
+                ? data.articles.map(a => `- ${a.title}`).join('\n')
+                : "Nenhuma notícia encontrada.";
             
             return {
-                content: [{ type: "text", text: `Aqui estão as últimas notícias que encontrei no servidor:\n${textoNoticias}` }]
+                content: [{ type: "text", text: `Notícias em tempo real:\n${textoNoticias}` }]
             };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: "Erro ao acessar o banco de notícias." }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: "Erro ao buscar notícias no MCP." }], isError: true };
         }
     }
-    throw new Error("Ferramenta não encontrada");
 });
 
-// Endpoints SSE para comunicação com o Gateway da IBM
+// ENDPOINTS SSE - AJUSTADOS
 let transport;
 app.get('/mcp', async (req, res) => {
+    // Definindo headers de segurança para SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     transport = new SSEServerTransport("/mcp/messages", res);
     await mcpServer.connect(transport);
+    
+    // Log para você ver no Render se a IBM bateu aqui
+    console.log("🔌 IBM Gateway se conectou ao MCP via SSE");
 });
 
 app.post('/mcp/messages', async (req, res) => {
     if (transport) {
         await transport.handlePostMessage(req, res);
+    } else {
+        res.status(400).send("Transporte não inicializado. Chame GET /mcp primeiro.");
     }
 });
 
