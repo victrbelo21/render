@@ -492,6 +492,45 @@ app.post('/atualizar-perfil', async (req, res) => {
 });
 
 // =====================================================================
+// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic)
+// =====================================================================
+app.post('/agente-bolao', async (req, res) => {
+    const { mensagem } = req.body;
+    
+    if (!mensagem) {
+        return res.status(400).json({ error: "Mensagem vazia." });
+    }
+
+    try {
+        // A URL exata que você tirou do painel
+        const agenteEndpoint = 'https://servicesessentials.ibm.com/agenticapps/a2a/61504138-6c1c-47fe-a774-05ba9b829b6c/agents/19469445-9226-4e9c-a450-142f3403806d'; 
+        
+        const response = await fetch(agenteEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                // Puxa a chave secreta guardada no cofre do Render
+                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` 
+            },
+            // IMPORTANTE: O formato do body varia de agente para agente. 
+            // O padrão de A2A costuma ser 'input' ou 'message'.
+            body: JSON.stringify({
+                input: mensagem 
+            })
+        });
+
+        const data = await response.json();
+        
+        // Devolve o JSON bruto do agente para o frontend ler
+        res.json(data);
+
+    } catch (error) {
+        console.error("Erro no Agente:", error);
+        res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário. Tente novamente." });
+    }
+});
+
+// =====================================================================
 // 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
 // =====================================================================
 
