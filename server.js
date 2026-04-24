@@ -495,7 +495,8 @@ app.post('/atualizar-perfil', async (req, res) => {
 // ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
-    const { mensagem } = req.body;
+    // 1. Agora também recebemos o sessionId do site
+    const { mensagem, sessionId } = req.body; 
     
     if (!mensagem) {
         return res.status(400).json({ error: "Mensagem vazia." });
@@ -504,12 +505,13 @@ app.post('/agente-bolao', async (req, res) => {
     try {
         const agenteEndpoint = 'https://servicesessentials.ibm.com/agenticapps/a2a/61504138-6c1c-47fe-a774-05ba9b829b6c/agents/19469445-9226-4e9c-a450-142f3403806d'; 
         
-        // Empacotamento rigoroso no formato JSON-RPC 2.0
         const rpcPayload = {
             jsonrpc: "2.0",
-            method: "message/send", // A chave mestra que a IBM nos deu!
+            method: "message/send", 
             params: {
-                message: mensagem 
+                message: mensagem,
+                // 2. Enviamos o crachá de memória para a IBM!
+                sessionId: sessionId || "sessao-bolao-padrao" 
             },
             id: 1 
         };
