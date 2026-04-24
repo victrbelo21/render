@@ -2,15 +2,16 @@
   "name": "bolao-backend",
   "version": "1.0.0",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@ibm-cloud/cloudant": "^0.11.0",
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@ibm-cloud/cloudant": "latest",
+    "@modelcontextprotocol/sdk": "latest",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "ibm-cloud-sdk-core": "^4.5.0",
+    "ibm-cloud-sdk-core": "latest",
     "node-cron": "^3.0.3",
     "node-fetch": "^2.6.7"
   }
