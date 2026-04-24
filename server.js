@@ -5,63 +5,76 @@ import cron from 'node-cron';
 import { CloudantV1 } from '@ibm-cloud/cloudant';
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
 
-// Imports para o MCP (Model Context Protocol)
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-
 const app = express();
 
 // Configuração de segurança e parse
 app.use(cors());
 app.use(express.json());
 
-// Função para responder ao "aperto de mão" da IBM via POST simples
-app.post('/mcp', async (req, res) => {
-    const { method, params, id } = req.body;
+// =====================================================================
+// 1. CONFIGURAÇÃO DO SERVIDOR MCP (VERSÃO NATIVA SSE)
+// =====================================================================
 
-    try {
-        // 1. IBM perguntando quais ferramentas você tem
-        if (method === 'tools/list') {
+app.get('/mcp', (req, res) => {
+    // Configura os headers para manter o "cano" aberto sem erro 502
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+    });
+
+    // Envia o endpoint de mensagens que a IBM precisa saber
+    const sessionId = Date.now();
+    res.write(`event: endpoint\ndata: /mcp/messages?sessionId=${sessionId}\n\n`);
+
+    // Keep-alive: envia um comentário a cada 15s para o Render não dar 502
+    const keepAlive = setInterval(() => {
+        res.write(': keep-alive\n\n');
+    }, 15000);
+
+    req.on('close', () => clearInterval(keepAlive));
+});
+
+app.post('/mcp/messages', async (req, res) => {
+    const { method, id, params } = req.body;
+
+    // Resposta para a lista de ferramentas
+    if (method === 'tools/list') {
+        return res.json({
+            jsonrpc: "2.0",
+            id,
+            result: {
+                tools: [{
+                    name: "get_latest_news_headlines",
+                    description: "Busca as manchetes de hoje sobre a Copa 2026",
+                    inputSchema: { type: "object", properties: {} }
+                }]
+            }
+        });
+    }
+
+    // Resposta para a execução da ferramenta
+    if (method === 'tools/call' && params.name === "get_latest_news_headlines") {
+        try {
+            const API_KEY = '99f3722bea4049eea78883baeada90cd';
+            const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            const texto = data.articles?.map(a => `- ${a.title}`).join('\n') || "Sem notícias.";
+
             return res.json({
                 jsonrpc: "2.0",
                 id,
                 result: {
-                    tools: [{
-                        name: "get_latest_news_headlines",
-                        description: "Busca as manchetes de hoje sobre a Copa 2026",
-                        inputSchema: { type: "object", properties: {} }
-                    }]
+                    content: [{ type: "text", text: `Notícias:\n${texto}` }]
                 }
             });
+        } catch (e) {
+            return res.json({ jsonrpc: "2.0", id, error: { code: -32603, message: "Erro na API" } });
         }
-
-        // 2. IBM mandando executar a ferramenta
-        if (method === 'tools/call') {
-            if (params.name === "get_latest_news_headlines") {
-                const API_KEY = '99f3722bea4049eea78883baeada90cd';
-                const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
-                const response = await fetch(url);
-                const data = await response.json();
-                const texto = data.articles?.map(a => `- ${a.title}`).join('\n') || "Sem notícias.";
-                
-                return res.json({
-                    jsonrpc: "2.0",
-                    id,
-                    result: {
-                        content: [{ type: "text", text: `Notícias Atualizadas:\n${texto}` }]
-                    }
-                });
-            }
-        }
-
-        // Se não for nada disso, responde padrão JSON-RPC
-        res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Método não encontrado" } });
-
-    } catch (error) {
-        console.error("Erro no MCP Manual:", error);
-        res.status(500).json({ jsonrpc: "2.0", id, error: { code: -32603, message: "Erro interno" } });
     }
+
+    res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Método não encontrado" } });
 });
 
 // =====================================================================
