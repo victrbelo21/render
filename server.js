@@ -5,7 +5,7 @@ const cron = require('node-cron');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
-// Imports para o MCP
+// Substitua os imports do MCP por estes:
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { SSEServerTransport } = require('@modelcontextprotocol/sdk/server/sse.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
