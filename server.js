@@ -65,21 +65,26 @@ app.get('/mcp', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    // Força o envio dos headers imediatamente
+    res.flushHeaders(); 
 
-    // Criamos um servidor NOVO para esta conexão específica
     const novoServidor = criarServidorMCP();
     const transport = new SSEServerTransport("/mcp/messages", res);
     
     await novoServidor.connect(transport);
     
-    // Guardamos o transporte para o POST saber quem responder
     const sessionId = transport.sessionId;
     transportesAtivos.set(sessionId, transport);
 
     console.log(`🔌 Nova conexão MCP: ${sessionId}`);
 
-    // Limpeza quando a conexão fechar
+    // HEARTBEAT: Envia um comentário vazio a cada 15s para manter a conexão ativa no Render
+    const heartbeat = setInterval(() => {
+        res.write(': heartbeat\n\n');
+    }, 15000);
+
     req.on('close', () => {
+        clearInterval(heartbeat);
         transportesAtivos.delete(sessionId);
         console.log(`❌ Conexão MCP encerrada: ${sessionId}`);
     });
