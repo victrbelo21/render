@@ -19,69 +19,80 @@ app.use(express.json());
 // =====================================================================
 // 1. CONFIGURAÇÃO DO SERVIDOR MCP (Model Context Protocol)
 // =====================================================================
-const mcpServer = new Server({
-    name: "bolao-mcp-server",
-    version: "1.0.0"
-}, {
-    capabilities: { tools: {} }
-});
 
-// Registro da ferramenta
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-        tools: [
-            {
-                name: "get_latest_news_headlines",
-                description: "Busca as manchetes mais recentes sobre a Copa 2026.",
-                inputSchema: { type: "object", properties: {} }
+// Função para criar um novo servidor MCP para cada conexão
+const criarServidorMCP = () => {
+    const s = new Server({
+        name: "bolao-mcp-server",
+        version: "1.0.0"
+    }, {
+        capabilities: { tools: {} }
+    });
+
+    // Registro da ferramenta
+    s.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: [{
+            name: "get_latest_news_headlines",
+            description: "Busca as manchetes mais recentes sobre a Copa 2026.",
+            inputSchema: { type: "object", properties: {} }
+        }]
+    }));
+
+    // Execução da ferramenta
+    s.setRequestHandler(CallToolRequestSchema, async (request) => {
+        if (request.params.name === "get_latest_news_headlines") {
+            try {
+                const API_KEY = '99f3722bea4049eea78883baeada90cd';
+                const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                const texto = data.articles?.length > 0 
+                    ? data.articles.map(a => `- ${a.title}`).join('\n') 
+                    : "Nenhuma notícia encontrada.";
+                return { content: [{ type: "text", text: `Notícias:\n${texto}` }] };
+            } catch (error) {
+                return { content: [{ type: "text", text: "Erro no MCP." }], isError: true };
             }
-        ]
-    };
-});
-
-// Execução da ferramenta - Simplificada para evitar erro de loop
-mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name === "get_latest_news_headlines") {
-        try {
-            // Em vez de dar fetch em si mesmo (que pode dar 502), chamamos a função de notícias direto
-            const API_KEY = '99f3722bea4049eea78883baeada90cd';
-            const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
-            const response = await fetch(url);
-            const data = await response.json();
-            
-            const textoNoticias = data.articles && data.articles.length > 0
-                ? data.articles.map(a => `- ${a.title}`).join('\n')
-                : "Nenhuma notícia encontrada.";
-            
-            return {
-                content: [{ type: "text", text: `Notícias em tempo real:\n${textoNoticias}` }]
-            };
-        } catch (error) {
-            return { content: [{ type: "text", text: "Erro ao buscar notícias no MCP." }], isError: true };
         }
-    }
-});
+    });
+    return s;
+};
 
-// ENDPOINTS SSE - AJUSTADOS
-let transport;
+// Mapa para guardar os transportes ativos por sessão
+const transportesAtivos = new Map();
+
 app.get('/mcp', async (req, res) => {
-    // Definindo headers de segurança para SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    transport = new SSEServerTransport("/mcp/messages", res);
-    await mcpServer.connect(transport);
+    // Criamos um servidor NOVO para esta conexão específica
+    const novoServidor = criarServidorMCP();
+    const transport = new SSEServerTransport("/mcp/messages", res);
     
-    // Log para você ver no Render se a IBM bateu aqui
-    console.log("🔌 IBM Gateway se conectou ao MCP via SSE");
+    await novoServidor.connect(transport);
+    
+    // Guardamos o transporte para o POST saber quem responder
+    const sessionId = transport.sessionId;
+    transportesAtivos.set(sessionId, transport);
+
+    console.log(`🔌 Nova conexão MCP: ${sessionId}`);
+
+    // Limpeza quando a conexão fechar
+    req.on('close', () => {
+        transportesAtivos.delete(sessionId);
+        console.log(`❌ Conexão MCP encerrada: ${sessionId}`);
+    });
 });
 
 app.post('/mcp/messages', async (req, res) => {
+    const sessionId = req.query.sessionId;
+    const transport = transportesAtivos.get(sessionId);
+
     if (transport) {
         await transport.handlePostMessage(req, res);
     } else {
-        res.status(400).send("Transporte não inicializado. Chame GET /mcp primeiro.");
+        res.status(400).send("Sessão MCP não encontrada.");
     }
 });
 
