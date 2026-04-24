@@ -90,14 +90,53 @@ app.get('/mcp', async (req, res) => {
     });
 });
 
-app.post('/mcp/messages', async (req, res) => {
-    const sessionId = req.query.sessionId;
-    const transport = transportesAtivos.get(sessionId);
+// Substitua todo o bloco do MCP por este:
 
-    if (transport) {
-        await transport.handlePostMessage(req, res);
-    } else {
-        res.status(400).send("Sessão MCP não encontrada.");
+// Função para responder ao "aperto de mão" da IBM via POST simples
+app.post('/mcp', async (req, res) => {
+    const { method, params, id } = req.body;
+
+    try {
+        // 1. IBM perguntando quais ferramentas você tem
+        if (method === 'tools/list') {
+            return res.json({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    tools: [{
+                        name: "get_latest_news_headlines",
+                        description: "Busca as manchetes de hoje sobre a Copa 2026",
+                        inputSchema: { type: "object", properties: {} }
+                    }]
+                }
+            });
+        }
+
+        // 2. IBM mandando executar a ferramenta
+        if (method === 'tools/call') {
+            if (params.name === "get_latest_news_headlines") {
+                const API_KEY = '99f3722bea4049eea78883baeada90cd';
+                const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=5&apiKey=${API_KEY}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                const texto = data.articles?.map(a => `- ${a.title}`).join('\n') || "Sem notícias.";
+                
+                return res.json({
+                    jsonrpc: "2.0",
+                    id,
+                    result: {
+                        content: [{ type: "text", text: `Notícias Atualizadas:\n${texto}` }]
+                    }
+                });
+            }
+        }
+
+        // Se não for nada disso, responde padrão JSON-RPC
+        res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Método não encontrado" } });
+
+    } catch (error) {
+        console.error("Erro no MCP Manual:", error);
+        res.status(500).json({ jsonrpc: "2.0", id, error: { code: -32603, message: "Erro interno" } });
     }
 });
 
