@@ -1,9 +1,14 @@
-const express = require('express');
-const cors = require('cors');
-const fetch = require('node-fetch'); 
-const cron = require('node-cron');
-const { CloudantV1 } = require('@ibm-cloud/cloudant');
-const { IamAuthenticator } = require('ibm-cloud-sdk-core');
+import express from 'express';
+import cors from 'cors';
+import fetch from 'node-fetch';
+import cron from 'node-cron';
+import { CloudantV1 } from '@ibm-cloud/cloudant';
+import { IamAuthenticator } from 'ibm-cloud-sdk-core';
+
+// Imports para o MCP (Model Context Protocol)
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
 
@@ -12,14 +17,86 @@ app.use(cors());
 app.use(express.json());
 
 // =====================================================================
-// 1. AUTENTICAÇÃO COM A IBM CLOUD (Cloudant)
+// 1. CONFIGURAÇÃO DO SERVIDOR MCP (Model Context Protocol)
+// =====================================================================
+const mcpServer = new Server({
+    name: "bolao-mcp-server",
+    version: "1.0.0"
+}, {
+    capabilities: {
+        tools: {}
+    }
+});
+
+// Registro da ferramenta no catálogo da IBM
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+        tools: [
+            {
+                name: "get_latest_news_headlines",
+                description: "Busca as manchetes mais recentes sobre a Copa 2026 filtradas pelo seu servidor.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        limit: { type: "number", description: "Quantidade de notícias (máx 5)" }
+                    }
+                }
+            }
+        ]
+    };
+});
+
+// Execução da ferramenta quando a IA solicitar
+mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (request.params.name === "get_latest_news_headlines") {
+        try {
+            // Chamada interna para a sua própria rota de notícias
+            const baseUrl = process.env.RENDER_EXTERNAL_HOSTNAME 
+                ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` 
+                : `http://localhost:${process.env.PORT || 8080}`;
+                
+            const newsResponse = await fetch(`${baseUrl}/noticias`);
+            const newsData = await newsResponse.json();
+            
+            const textoNoticias = newsData.articles && newsData.articles.length > 0
+                ? newsData.articles.map(a => `- ${a.title}`).join('\n')
+                : "Nenhuma notícia relevante encontrada no momento.";
+            
+            return {
+                content: [{ type: "text", text: `Aqui estão as últimas notícias que encontrei no servidor:\n${textoNoticias}` }]
+            };
+        } catch (error) {
+            return {
+                content: [{ type: "text", text: "Erro ao acessar o banco de notícias." }],
+                isError: true
+            };
+        }
+    }
+    throw new Error("Ferramenta não encontrada");
+});
+
+// Endpoints SSE para comunicação com o Gateway da IBM
+let transport;
+app.get('/mcp', async (req, res) => {
+    transport = new SSEServerTransport("/mcp/messages", res);
+    await mcpServer.connect(transport);
+});
+
+app.post('/mcp/messages', async (req, res) => {
+    if (transport) {
+        await transport.handlePostMessage(req, res);
+    }
+});
+
+// =====================================================================
+// 2. AUTENTICAÇÃO COM A IBM CLOUD (Cloudant)
 // =====================================================================
 const authenticator = new IamAuthenticator({
-  apikey: process.env.CLOUDANT_APIKEY
+    apikey: process.env.CLOUDANT_APIKEY
 });
 
 const cloudant = new CloudantV1({
-  authenticator: authenticator
+    authenticator: authenticator
 });
 
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
@@ -30,69 +107,29 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
 
-// Dicionário Oficial - Copa do Mundo 2026 (Sem acentos do lado esquerdo)
 const dicionarioTimes = {
-    "africa do sul": "south africa",
-    "alemanha": "germany",
-    "arabia saudita": "saudi arabia",
-    "argelia": "algeria",
-    "argentina": "argentina",
-    "australia": "australia",
-    "austria": "austria",
-    "belgica": "belgium",
-    "bosnia e herzegovina": "bosnia and herzegovina",
-    "brasil": "brazil",
-    "cabo verde": "cape verde",
-    "canada": "canada",
-    "catar": "qatar",
-    "colombia": "colombia",
-    "costa do marfim": "cote divoire", // football-data usa "Côte d'Ivoire", nossa função limpa para "cote divoire"
-    "croacia": "croatia",
-    "curacau": "curacao",
-    "egito": "egypt",
-    "equador": "ecuador",
-    "escocia": "scotland",
-    "espanha": "spain",
-    "estados unidos": "united states",
-    "franca": "france",
-    "gana": "ghana",
-    "haiti": "haiti",
-    "holanda": "netherlands",
-    "inglaterra": "england",
-    "ira": "iran",
-    "iraque": "iraq",
-    "japao": "japan",
-    "jordania": "jordan",
-    "marrocos": "morocco",
-    "mexico": "mexico",
-    "noruega": "norway",
-    "nova zelandia": "new zealand",
-    "panama": "panama",
-    "paraguai": "paraguay",
-    "portugal": "portugal",
-    "rep da coreia": "south korea",
-    "rep dem do congo": "dr congo",
-    "rep tcheca": "czech republic",
-    "senegal": "senegal",
-    "suecia": "sweden",
-    "suica": "switzerland",
-    "tunisia": "tunisia",
-    "turquia": "turkey",
-    "uruguai": "uruguay",
-    "uzbequistao": "uzbekistan"
+    "africa do sul": "south africa", "alemanha": "germany", "arabia saudita": "saudi arabia",
+    "argelia": "algeria", "argentina": "argentina", "australia": "australia",
+    "austria": "austria", "belgica": "belgium", "bosnia e herzegovina": "bosnia and herzegovina",
+    "brasil": "brazil", "cabo verde": "cape verde", "canada": "canada", "catar": "qatar",
+    "colombia": "colombia", "costa do marfim": "cote divoire", "croacia": "croatia",
+    "curacau": "curacao", "egito": "egypt", "equador": "ecuador", "escocia": "scotland",
+    "espanha": "spain", "estados unidos": "united states", "franca": "france",
+    "gana": "ghana", "haiti": "haiti", "holanda": "netherlands", "inglaterra": "england",
+    "ira": "iran", "iraque": "iraq", "japao": "japan", "jordania": "jordan",
+    "marrocos": "morocco", "mexico": "mexico", "noruega": "norway", "nova zelandia": "new zealand",
+    "panama": "panama", "paraguai": "paraguay", "portugal": "portugal", "rep da coreia": "south korea",
+    "rep dem do congo": "dr congo", "rep tcheca": "czech republic", "senegal": "senegal",
+    "suecia": "sweden", "suica": "switzerland", "tunisia": "tunisia", "turquia": "turkey",
+    "uruguai": "uruguay", "uzbequistao": "uzbekistan"
 };
 
 // =====================================================================
-// FUNÇÕES DE LIMPEZA E FORMATAÇÃO (Texto e Datas)
+// FUNÇÕES DE LIMPEZA E FORMATAÇÃO
 // =====================================================================
 function formatarTexto(texto) {
     if (!texto) return '';
-    return texto.normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '') 
-                .replace(/-/g, ' ') 
-                .replace(/[^\w\s]/gi, '') 
-                .toLowerCase()
-                .trim();
+    return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/-/g, ' ').replace(/[^\w\s]/gi, '').toLowerCase().trim();
 }
 
 function traduzirTime(nomeBR) {
@@ -102,612 +139,152 @@ function traduzirTime(nomeBR) {
 
 function formatarDataISO(dataString) {
     if (!dataString) return null;
-    
     const dataLower = dataString.toLowerCase();
-
-    // 1. Se vier no formato do site: "Quinta-feira, 11 de Junho de 2026"
     if (dataLower.includes(' de ')) {
-        const meses = {
-            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-            'abril': '04', 'maio': '05', 'junho': '06',
-            'julho': '07', 'agosto': '08', 'setembro': '09',
-            'outubro': '10', 'novembro': '11', 'dezembro': '12'
-        };
-
+        const meses = { 'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03', 'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12' };
         const match = dataLower.match(/(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})/);
-
         if (match) {
             const dia = match[1].padStart(2, '0');
-            const mesNome = match[2];
-            const ano = match[3];
-            const mes = meses[mesNome];
-
-            if (mes) {
-                return `${ano}-${mes}-${dia}`;
-            }
+            const mes = meses[match[2]];
+            if (mes) return `${match[3]}-${mes}-${dia}`;
         }
     }
-
-    // 2. Se vier como DD/MM/YYYY
     if (dataString.includes('/')) {
         const partes = dataString.split('/');
-        if (partes.length === 3) {
-            return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
-        }
+        if (partes.length === 3) return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
     }
-    
-    // 3. Se já vier como ISO padrão da API
-    if (dataString.length >= 10) {
-        return dataString.substring(0, 10);
-    }
-    
-    return dataString;
+    return dataString.length >= 10 ? dataString.substring(0, 10) : dataString;
 }
 
 // =====================================================================
-// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
+// 3. CRON JOB - Recálculo de Resultados
 // =====================================================================
 cron.schedule('*/10 * * * *', async () => {
-    console.log('⚽ Verificando e recalculando resultados (World Cup)...');
-    
+    console.log('⚽ Recalculando resultados...');
     try {
-        // Alterado para WC (World Cup)
         const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
-        
         const data = await response.json();
-        
-        if (data.errorCode) {
-            console.log('❌ Erro na API:', data.message);
-            return;
-        }
-        
         const jogosOficiais = data.matches || [];
+        if (jogosOficiais.length === 0) return;
 
-        if (jogosOficiais.length === 0) {
-            console.log('Nenhum jogo novo finalizado no momento.');
-            return;
-        }
-        
-        const userDocs = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: { "$eq": "cartela_usuario" } },
-            limit: 2000
-        });
-
-        const cartelas = userDocs.result.docs;
-
-        for (let doc of cartelas) {
+        const userDocs = await cloudant.postFind({ db: DB_NAME, selector: { type: "cartela_usuario" }, limit: 2000 });
+        for (let doc of userDocs.result.docs) {
             let pontosTotalCalculado = 0;
-            let houveMudancaInterna = false; 
+            let mudou = false;
+            if (!doc.palpites_jogos) continue;
 
-            if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
-
-            doc.palpites_jogos.forEach(palpite => {
-                const time1Ingles = traduzirTime(palpite.time_1);
-                const time2Ingles = traduzirTime(palpite.time_2);
-                const dataPalpite = formatarDataISO(palpite.data_jogo);
-
-                let placarReal1 = null;
-                let placarReal2 = null;
-
-                const jogoOficial = jogosOficiais.find(j => {
-                    const home = formatarTexto(j.homeTeam.name);
-                    const away = formatarTexto(j.awayTeam.name);
-                    const dataAPI = formatarDataISO(j.utcDate);
-
-                    // Trava de Data
-                    const bateuData = dataPalpite ? (dataPalpite === dataAPI) : true;
-
-                    // Lógica Bi-direcional (Permite inverter Casa/Fora)
-                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
-                                       (away.includes(time2Ingles) || time2Ingles.includes(away));
-
-                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
-                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
-
-                    if (bateuData) {
-                        if (ordemExata) {
-                            placarReal1 = j.score.fullTime.home;
-                            placarReal2 = j.score.fullTime.away;
-                            return true;
-                        } else if (ordemInvertida) {
-                            placarReal1 = j.score.fullTime.away;
-                            placarReal2 = j.score.fullTime.home;
-                            return true;
-                        }
-                    }
-                    return false;
+            doc.palpites_jogos.forEach(p => {
+                const t1 = traduzirTime(p.time_1);
+                const t2 = traduzirTime(p.time_2);
+                const dP = formatarDataISO(p.data_jogo);
+                const jogo = jogosOficiais.find(j => {
+                    const h = formatarTexto(j.homeTeam.name);
+                    const a = formatarTexto(j.awayTeam.name);
+                    const dA = formatarDataISO(j.utcDate);
+                    return dP === dA && ((h.includes(t1) && a.includes(t2)) || (a.includes(t1) && h.includes(t2)));
                 });
 
-                if (jogoOficial) {
-                    const palpite1 = palpite.placar_1;
-                    const palpite2 = palpite.placar_2;
-
-                    let pontosGanhos = 0;
-
-                    if (palpite1 === placarReal1 && palpite2 === placarReal2) {
-                        pontosGanhos = 5; 
-                    } else {
-                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
-                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
-                    }
-
-                    if (palpite.pontos_obtidos !== pontosGanhos) {
-                        palpite.pontos_obtidos = pontosGanhos;
-                        houveMudancaInterna = true;
-                    }
+                if (jogo) {
+                    let r1 = jogo.score.fullTime.home, r2 = jogo.score.fullTime.away;
+                    if (formatarTexto(jogo.awayTeam.name).includes(t1)) [r1, r2] = [r2, r1];
+                    let pts = 0;
+                    if (p.placar_1 === r1 && p.placar_2 === r2) pts = 5;
+                    else if ((r1>r2 && p.placar_1>p.placar_2) || (r1<r2 && p.placar_1<p.placar_2) || (r1===r2 && p.placar_1===p.placar_2)) pts = 2;
+                    if (p.pontos_obtidos !== pts) { p.pontos_obtidos = pts; mudou = true; }
                 }
-                
-                pontosTotalCalculado += (palpite.pontos_obtidos || 0);
+                pontosTotalCalculado += (p.pontos_obtidos || 0);
             });
-
-            if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
+            if (doc.pontos_acumulados !== pontosTotalCalculado || mudou) {
                 doc.pontos_acumulados = pontosTotalCalculado;
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             }
         }
-    } catch (error) {
-        console.error('❌ Erro no Cron Job:', error);
-    }
+    } catch (e) { console.error('Erro Cron:', e); }
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
+// 4. ROTA DE NOTÍCIAS
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
-    
-    const query = encodeURIComponent('Copa do Mundo FIFA 2026');
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
-
+    const url = `https://newsapi.org/v2/everything?q=Copa%20do%20Mundo%20FIFA%202026&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
     try {
         const response = await fetch(url);
         const data = await response.json();
-
-        console.log("Status NewsAPI:", data.status, "| Total Encontrado:", data.totalResults);
-
-        if (data.status === 'ok' && data.articles && data.articles.length > 0) {
-            
-            // 1. AS LISTAS NEGRAS (BLACKLISTS)
-            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles', 'diariodocentrodomundo', 'pragmatismopolitico', 'abril']; // Nova lista de bloqueio de fontes
-            const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
-            const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
-            const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
-            const proibidoOutrosEsportes = ['basquete', 'vôlei', 'tênis', 'futsal', 'rugby', 'fórmula 1', 'esports', 'ginástica', 'olimpíadas'];
-            const proibidoTimesBR = ['flamengo', 'corinthians', 'palmeiras', 'são paulo', 'vasco', 'santos', 'cruzeiro', 'atlético-mg', 'grêmio', 'internacional', 'botafogo', 'fluminense', 'brasileirão', 'libertadores'];
-            const proibidoPolitica = ['lula', 'bolsonaro', 'congresso', 'stf', 'eleição', 'política', 'governo', 'deputado'];
-
-            // Função auxiliar para checar se alguma palavra da lista está no texto
-            const temPalavra = (texto, lista) => lista.some(palavra => texto.includes(palavra));
-
-            // 2. FILTRAGEM DE PENTE FINO
-            let artigosValidos = data.articles.filter(article => {
-                const titulo = article.title ? article.title.toLowerCase() : '';
-                const desc = article.description ? article.description.toLowerCase() : '';
-                const textoCompleto = `${titulo} ${desc}`; 
-                
-                const sourceName = article.source?.name?.toLowerCase() || '';
-                const articleUrl = article.url?.toLowerCase() || '';
-                
-                // Validação Básica
-                const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
-                
-                // Validação de Tema (Deve ter a ver com copa)
-                const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
-
-                // Verificando as Blacklists
-                const isSiteProibido = proibidoSites.some(site => sourceName.includes(site) || articleUrl.includes(site));
-                const isAposta = temPalavra(textoCompleto, proibidoApostas);
-                const isFeminino = temPalavra(textoCompleto, proibidoFeminino);
-                const isOutroAno = temPalavra(textoCompleto, proibidoOutrosAnos);
-                const isOutroEsporte = temPalavra(textoCompleto, proibidoOutrosEsportes);
-                const isTimeBR = temPalavra(textoCompleto, proibidoTimesBR);
-                const isPolitica = temPalavra(textoCompleto, proibidoPolitica);
-
-                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em NENHUMA blacklist
-                return basicoOk && falaDeCopa && !isSiteProibido && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
+        if (data.status === 'ok' && data.articles) {
+            const black = ['ig', 'terra', 'metrópoles', 'cassino', 'aposta', 'bet', 'feminina', 'lula', 'bolsonaro'];
+            let filtrados = data.articles.filter(a => {
+                const txt = `${a.title} ${a.description}`.toLowerCase();
+                return a.urlToImage && !black.some(b => txt.includes(b) || a.source.name.toLowerCase().includes(b));
             });
-            
-            if (artigosValidos.length > 0) {
-                // 3. PRIORIZAÇÃO DE SITES GRANDES (Terra foi removido daqui)
-                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn'];
-
-                artigosValidos.forEach(article => {
-                    const sourceName = article.source?.name?.toLowerCase() || '';
-                    const articleUrl = article.url?.toLowerCase() || '';
-                    
-                    const isPremium = sitesPremium.some(site => sourceName.includes(site) || articleUrl.includes(site));
-                    
-                    article.score = Math.random() + (isPremium ? 10 : 0);
-                });
-
-                artigosValidos.sort((a, b) => b.score - a.score);
-                data.articles = artigosValidos.slice(0, 5);
-            } else {
-                data.articles = []; 
-            }
-        } else {
-            data.articles = []; 
+            data.articles = filtrados.slice(0, 5);
         }
         res.json(data);
-    } catch (error) {
-        console.error("Erro na ponte de notícias:", error);
-        res.status(500).json({ status: "error", message: "Falha interna ao buscar notícias" });
-    }
+    } catch (e) { res.status(500).json({ error: "Erro notícias" }); }
 });
 
 // =====================================================================
-// 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
+// 5. ROTAS DO BOLÃO E CHAT
 // =====================================================================
-
 app.post('/salvar-lote', async (req, res) => {
-  try {
-    const { user_email, user_name, palpites } = req.body;
-
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: {
-        type: { "$eq": "cartela_usuario" },
-        user_email: { "$eq": user_email }
-      }
-    });
-
-    const existingDoc = searchResponse.result.docs[0];
-
-    if (existingDoc) {
-      existingDoc.palpites_jogos = palpites;
-      existingDoc.user_name = user_name;
-      existingDoc.timestamp = new Date().toISOString();
-
-      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Cartela atualizada" });
-    } else {
-      const novoDocumento = {
-        type: "cartela_usuario",
-        user_email, user_name, 
-        palpites_jogos: palpites,
-        pontos_acumulados: 0,
-        palpite_final: null,
-        timestamp: new Date().toISOString()
-      };
-      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-      res.status(200).json({ success: true, message: "Cartela criada" });
-    }
-  } catch (error) {
-    console.error("Erro /salvar-lote:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar lote' });
-  }
-});
-
-app.post('/salvar-final', async (req, res) => {
-  try {
-    const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
-    });
-
-    const existingDoc = searchResponse.result.docs[0];
-    const dadosDaFinal = { vencedor_campeonato, placar_final };
-
-    if (existingDoc) {
-      existingDoc.palpite_final = dadosDaFinal;
-      existingDoc.timestamp = new Date().toISOString();
-      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Final salva" });
-    } else {
-      const novoDocumento = {
-        type: "cartela_usuario",
-        user_email, user_name: user_name || user_email.split('@')[0],
-        palpites_jogos: [],
-        pontos_acumulados: 0,
-        palpite_final: dadosDaFinal,
-        timestamp: new Date().toISOString()
-      };
-      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-      res.status(200).json({ success: true, message: "Cartela criada com a final" });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Erro palpite final' });
-  }
+    try {
+        const { user_email, user_name, palpites } = req.body;
+        const search = await cloudant.postFind({ db: DB_NAME, selector: { type: "cartela_usuario", user_email } });
+        const doc = search.result.docs[0];
+        if (doc) {
+            doc.palpites_jogos = palpites; doc.user_name = user_name; doc.timestamp = new Date().toISOString();
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        } else {
+            await cloudant.postDocument({ db: DB_NAME, document: { type: "cartela_usuario", user_email, user_name, palpites_jogos: palpites, pontos_acumulados: 0, timestamp: new Date().toISOString() } });
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 app.get('/ranking', async (req, res) => {
-  try {
-    const response = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" } },
-      limit: 2000
-    });
-
-    const rankingArray = response.result.docs.map(doc => ({
-        email: doc.user_email,
-        nome: doc.user_name,
-        pontos: doc.pontos_acumulados || 0,
-        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
-        time_coracao: doc.time_coracao || '', 
-        recorde_embaixadinha: doc.recorde_embaixadinha || 0 
-    }));
-
-    rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
-    res.status(200).json({ success: true, ranking: rankingArray });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
-  }
+    try {
+        const r = await cloudant.postFind({ db: DB_NAME, selector: { type: "cartela_usuario" }, limit: 1000 });
+        const lista = r.result.docs.map(d => ({ nome: d.user_name, pontos: d.pontos_acumulados || 0 })).sort((a,b) => b.pontos - a.pontos);
+        res.json({ success: true, ranking: lista });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
-app.post('/buscar-cartela', async (req, res) => {
-  try {
-    const { user_email } = req.body;
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
-    });
-
-    const existingDoc = searchResponse.result.docs[0];
-    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [] });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
-  }
-});
-
-// =====================================================================
-// ROTAS DO PERFIL (Salvar Time do Coração e Embaixadinhas)
-// =====================================================================
-app.post('/atualizar-perfil', async (req, res) => {
-  try {
-    const { user_email, time_coracao, recorde_embaixadinha } = req.body;
-    
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
-    });
-
-    const existingDoc = searchResponse.result.docs[0];
-
-    if (existingDoc) {
-      // Atualiza apenas se o dado foi enviado pelo site
-      if (time_coracao !== undefined && time_coracao !== "") {
-          existingDoc.time_coracao = time_coracao;
-      }
-      if (recorde_embaixadinha !== undefined) {
-          // Só atualiza se o recorde novo for maior que o antigo salvo no banco
-          if (!existingDoc.recorde_embaixadinha || recorde_embaixadinha > existingDoc.recorde_embaixadinha) {
-              existingDoc.recorde_embaixadinha = recorde_embaixadinha;
-          }
-      }
-      
-      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Perfil atualizado!" });
-    } else {
-      res.status(404).json({ success: false, error: 'Usuário não encontrado. Crie um palpite primeiro.' });
-    }
-  } catch (error) {
-    console.error("Erro ao atualizar perfil:", error);
-    res.status(500).json({ success: false, error: 'Erro interno' });
-  }
-});
-
-// =====================================================================
-// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
-// =====================================================================
 app.post('/agente-bolao', async (req, res) => {
     const { mensagem, historico } = req.body;
-    
-    if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
-
+    if (!mensagem) return res.status(400).json({ error: "vazia" });
     try {
-        const agenteEndpoint = process.env.ICA_AGENT_URL; 
-        
-        // --- FORMATAÇÃO PROFISSIONAL DE HISTÓRICO ---
-        let promptFinal = "";
-
-        if (historico && historico.length > 0) {
-            promptFinal = "CONTEXTO DA CONVERSA ATUAL:\n";
-            historico.forEach(msg => {
-                const autor = msg.role === 'user' ? "Usuário" : "Assistente";
-                promptFinal += `[${autor}]: ${msg.content}\n`;
-            });
-            promptFinal += "\n--- FIM DO CONTEXTO ---\n\n";
-            promptFinal += `PERGUNTA ATUAL: ${mensagem}\n\n`;
-            promptFinal += "INSTRUÇÃO: Se a PERGUNTA ATUAL for uma confirmação (como 'sim'), use o CONTEXTO acima para dar a resposta detalhada imediatamente.";
-        } else {
-            promptFinal = mensagem;
-        }
-        // --------------------------------------------
-
-        const rpcPayload = {
-            jsonrpc: "2.0",
-            method: "message/send", 
-            params: { message: promptFinal },
-            id: 1 
-        };
-
-        const response = await fetch(agenteEndpoint, {
+        let promptFinal = historico?.length > 0 ? `CONTEXTO:\n${historico.map(m => `[${m.role}]: ${m.content}`).join('\n')}\n\nPERGUNTA: ${mensagem}` : mensagem;
+        const response = await fetch(process.env.ICA_AGENT_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` 
-            },
-            body: JSON.stringify(rpcPayload)
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.ICA_APP_KEY}` },
+            body: JSON.stringify({ jsonrpc: "2.0", method: "message/send", params: { message: promptFinal }, id: 1 })
         });
-
         const data = await response.json();
-        
-        if (data.error) {
-            console.error("Erro JSON-RPC da IBM:", data.error);
-            return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data.error });
-        }
-
-        res.json({ resposta: data.result }); 
-
-    } catch (error) {
-        console.error("Erro no Agente:", error);
-        res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário." });
-    }
+        res.json({ resposta: data.result });
+    } catch (e) { res.status(500).json({ error: "Erro agente" }); }
 });
-
-// =====================================================================
-// 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
-// =====================================================================
 
 app.post('/chat', async (req, res) => {
     try {
         const { user_email, user_name, mensagem } = req.body;
-        const novoDocumento = {
-            type: "chat_message",
-            user_email, user_name, mensagem,
-            timestamp: new Date().toISOString(),
-            likes: [],  
-            replies: [] 
-        };
-        await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-        res.status(200).json({ success: true, message: "Mensagem postada!" });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao postar mensagem' });
-    }
+        await cloudant.postDocument({ db: DB_NAME, document: { type: "chat_message", user_email, user_name, mensagem, timestamp: new Date().toISOString(), likes: [], replies: [] } });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 app.get('/chat', async (req, res) => {
     try {
-        const response = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: { "$eq": "chat_message" } },
-            limit: 100 
-        });
-        let mensagens = response.result.docs;
-        mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        res.status(200).json({ success: true, mensagens: mensagens });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao carregar o mural' });
-    }
-});
-
-app.post('/chat/like', async (req, res) => {
-    try {
-        const { msg_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-        
-        if (!doc.likes) doc.likes = [];
-        const index = doc.likes.indexOf(user_email);
-        
-        if (index > -1) doc.likes.splice(index, 1); 
-        else doc.likes.push(user_email); 
-
-        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-        res.status(200).json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao curtir' });
-    }
-});
-
-app.post('/chat/reply', async (req, res) => {
-    try {
-        const { msg_id, user_email, user_name, mensagem } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (!doc.replies) doc.replies = [];
-        
-        doc.replies.push({
-            reply_id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-            user_email, 
-            user_name, 
-            mensagem,
-            timestamp: new Date().toISOString(),
-            likes: [] 
-        });
-
-        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-        res.status(200).json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao responder' });
-    }
-});
-
-app.post('/chat/reply/like', async (req, res) => {
-    try {
-        const { msg_id, reply_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-        const reply = doc.replies.find(r => r.reply_id === reply_id);
-        
-        if (reply) {
-            if (!reply.likes) reply.likes = [];
-            const index = reply.likes.indexOf(user_email);
-            
-            if (index > -1) reply.likes.splice(index, 1); 
-            else reply.likes.push(user_email); 
-            
-            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-        }
-        res.status(200).json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao curtir resposta' });
-    }
-});
-
-app.post('/chat/delete', async (req, res) => {
-    try {
-        const { msg_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (doc.user_email === user_email) {
-            await cloudant.deleteDocument({
-                db: DB_NAME,
-                docId: doc._id,
-                rev: doc._rev
-            });
-            res.status(200).json({ success: true });
-        } else {
-            res.status(403).json({ success: false, error: 'Não autorizado' });
-        }
-    } catch (error) {
-        console.error("Erro ao apagar:", error);
-        res.status(500).json({ success: false, error: 'Erro ao apagar mensagem' });
-    }
-});
-
-app.post('/chat/reply/delete', async (req, res) => {
-    try {
-        const { msg_id, reply_id, user_email } = req.body;
-        
-        // Pega o post original
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (!doc.replies) {
-            return res.status(404).json({ success: false, error: 'Nenhuma resposta encontrada' });
-        }
-
-        // Acha o índice da resposta específica
-        const replyIndex = doc.replies.findIndex(r => r.reply_id === reply_id);
-        
-        if (replyIndex === -1) {
-            return res.status(404).json({ success: false, error: 'Resposta não encontrada' });
-        }
-
-        // Verifica se o usuário logado é o dono da resposta
-        if (doc.replies[replyIndex].user_email === user_email) {
-            // Remove a resposta da array
-            doc.replies.splice(replyIndex, 1);
-
-            // Atualiza o documento no banco de dados
-            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-            res.status(200).json({ success: true });
-        } else {
-            res.status(403).json({ success: false, error: 'Não autorizado' });
-        }
-    } catch (error) {
-        console.error("Erro ao apagar resposta:", error);
-        res.status(500).json({ success: false, error: 'Erro ao apagar resposta' });
-    }
+        const r = await cloudant.postFind({ db: DB_NAME, selector: { type: "chat_message" }, limit: 100 });
+        res.json({ success: true, mensagens: r.result.docs.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)) });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
 // =====================================================================
-// 6. INICIALIZAÇÃO DO SERVIDOR
+// 6. INICIALIZAÇÃO
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Servidor Node.js (Bolão + Cron + Chat) rodando na porta ${port}`);
+    console.log(`🚀 Servidor rodando na porta ${port} com MCP Ativado`);
 });
