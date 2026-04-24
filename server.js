@@ -492,7 +492,7 @@ app.post('/atualizar-perfil', async (req, res) => {
 });
 
 // =====================================================================
-// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic)
+// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
     const { mensagem } = req.body;
@@ -502,31 +502,42 @@ app.post('/agente-bolao', async (req, res) => {
     }
 
     try {
-        // A URL exata que você tirou do painel
         const agenteEndpoint = 'https://servicesessentials.ibm.com/agenticapps/a2a/61504138-6c1c-47fe-a774-05ba9b829b6c/agents/19469445-9226-4e9c-a450-142f3403806d'; 
         
+        // Empacotamento rigoroso no formato JSON-RPC 2.0
+        const rpcPayload = {
+            jsonrpc: "2.0",
+            method: "invoke", // Método padrão para invocar agentes no ICA
+            params: {
+                input: mensagem 
+            },
+            id: 1 // Um ID qualquer para rastrear a requisição
+        };
+
         const response = await fetch(agenteEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                // Puxa a chave secreta guardada no cofre do Render
                 'Authorization': `Bearer ${process.env.ICA_APP_KEY}` 
             },
-            // IMPORTANTE: O formato do body varia de agente para agente. 
-            // O padrão de A2A costuma ser 'input' ou 'message'.
-            body: JSON.stringify({
-                input: mensagem 
-            })
+            body: JSON.stringify(rpcPayload)
         });
 
         const data = await response.json();
         
-        // Devolve o JSON bruto do agente para o frontend ler
-        res.json(data);
+        // Se a IBM retornar um erro de RPC (ex: método não encontrado), a gente loga para debugar
+        if (data.error) {
+            console.error("Erro JSON-RPC da IBM:", data.error);
+            return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data.error });
+        }
+
+        // Devolve a resposta limpa para o front-end
+        // O resultado costuma vir dentro de data.result.output ou data.result
+        res.json({ resposta: data.result }); 
 
     } catch (error) {
         console.error("Erro no Agente:", error);
-        res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário. Tente novamente." });
+        res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário." });
     }
 });
 
