@@ -15,34 +15,33 @@ app.use(express.json());
 // 1. CONFIGURAÇÃO DO SERVIDOR MCP (VERSÃO NATIVA SSE)
 // =====================================================================
 
+// =====================================================================
+// 1. CONFIGURAÇÃO DO SERVIDOR MCP (PROTOCOLO SIMPLIFICADO)
+// =====================================================================
+
+// Rota GET: Para o navegador e para o primeiro "oi" da IBM
 app.get('/mcp', (req, res) => {
-    // Configura os headers para manter o "cano" aberto sem erro 502
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+    // Em vez de stream, enviamos um JSON direto. 
+    // Muitos gateways aceitam isso como fallback.
+    res.json({
+        capabilities: { tools: {} },
+        tools: [{
+            name: "get_latest_news_headlines",
+            description: "Busca as manchetes de hoje sobre a Copa 2026",
+            inputSchema: { type: "object", properties: {} }
+        }]
     });
-
-    // Envia o endpoint de mensagens que a IBM precisa saber
-    const sessionId = Date.now();
-    res.write(`event: endpoint\ndata: /mcp/messages?sessionId=${sessionId}\n\n`);
-
-    // Keep-alive: envia um comentário a cada 15s para o Render não dar 502
-    const keepAlive = setInterval(() => {
-        res.write(': keep-alive\n\n');
-    }, 15000);
-
-    req.on('close', () => clearInterval(keepAlive));
 });
 
-app.post('/mcp/messages', async (req, res) => {
-    const { method, id, params } = req.body;
+// Rota POST: Onde a mágica acontece
+app.post('/mcp', async (req, res) => {
+    const { method, params, id } = req.body;
 
-    // Resposta para a lista de ferramentas
-    if (method === 'tools/list') {
+    // Se a IBM perguntar a lista via POST
+    if (method === 'tools/list' || !method) {
         return res.json({
             jsonrpc: "2.0",
-            id,
+            id: id || 1,
             result: {
                 tools: [{
                     name: "get_latest_news_headlines",
@@ -53,7 +52,7 @@ app.post('/mcp/messages', async (req, res) => {
         });
     }
 
-    // Resposta para a execução da ferramenta
+    // Execução da ferramenta
     if (method === 'tools/call' && params.name === "get_latest_news_headlines") {
         try {
             const API_KEY = '99f3722bea4049eea78883baeada90cd';
@@ -73,7 +72,6 @@ app.post('/mcp/messages', async (req, res) => {
             return res.json({ jsonrpc: "2.0", id, error: { code: -32603, message: "Erro na API" } });
         }
     }
-
     res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Método não encontrado" } });
 });
 
