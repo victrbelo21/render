@@ -5,11 +5,6 @@ const cron = require('node-cron');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
-// Substitua os imports do MCP por estes:
-const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
-const { SSEServerTransport } = require('@modelcontextprotocol/sdk/server/sse.js');
-const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
-
 const app = express();
 
 // Configuração de segurança e parse
@@ -17,80 +12,14 @@ app.use(cors());
 app.use(express.json());
 
 // =====================================================================
-// 1. CONFIGURAÇÃO DO SERVIDOR MCP (Model Context Protocol)
-// =====================================================================
-const mcpServer = new Server({
-    name: "bolao-mcp-server",
-    version: "1.0.0"
-}, {
-    capabilities: {
-        tools: {}
-    }
-});
-
-// Lista de ferramentas que aparecerão no painel da IBM
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-        tools: [
-            {
-                name: "get_latest_news_headlines",
-                description: "Busca as manchetes mais recentes sobre a Copa 2026 filtradas pelo seu servidor.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        limit: { type: "number", description: "Quantidade de notícias (máx 5)" }
-                    }
-                }
-            }
-        ]
-    };
-});
-
-// Lógica de execução da ferramenta
-mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name === "get_latest_news_headlines") {
-        try {
-            // Simulamos uma chamada interna para a sua própria rota de notícias
-            const newsResponse = await fetch(`http://localhost:${process.env.PORT || 8080}/noticias`);
-            const newsData = await newsResponse.json();
-            
-            const textoNoticias = newsData.articles.map(a => `- ${a.title}`).join('\n');
-            
-            return {
-                content: [{ type: "text", text: `Aqui estão as últimas notícias que encontrei:\n${textoNoticias}` }]
-            };
-        } catch (error) {
-            return {
-                content: [{ type: "text", text: "Não consegui acessar as notícias agora." }],
-                isError: true
-            };
-        }
-    }
-    throw new Error("Ferramenta não encontrada");
-});
-
-// Endpoint SSE para a IBM conectar
-let transport;
-app.get('/mcp', async (req, res) => {
-    transport = new SSEServerTransport("/mcp/messages", res);
-    await mcpServer.connect(transport);
-});
-
-app.post('/mcp/messages', async (req, res) => {
-    if (transport) {
-        await transport.handlePostMessage(req, res);
-    }
-});
-
-// =====================================================================
-// 2. AUTENTICAÇÃO COM A IBM CLOUD (Cloudant)
+// 1. AUTENTICAÇÃO COM A IBM CLOUD (Cloudant)
 // =====================================================================
 const authenticator = new IamAuthenticator({
-    apikey: process.env.CLOUDANT_APIKEY
+  apikey: process.env.CLOUDANT_APIKEY
 });
 
 const cloudant = new CloudantV1({
-    authenticator: authenticator
+  authenticator: authenticator
 });
 
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
@@ -106,7 +35,6 @@ const dicionarioTimes = {
     "africa do sul": "south africa",
     "alemanha": "germany",
     "arabia saudita": "saudi arabia",
-    "arabia saudita": "saudi arabia",
     "argelia": "algeria",
     "argentina": "argentina",
     "australia": "australia",
@@ -118,7 +46,7 @@ const dicionarioTimes = {
     "canada": "canada",
     "catar": "qatar",
     "colombia": "colombia",
-    "costa do marfim": "cote divoire",
+    "costa do marfim": "cote divoire", // football-data usa "Côte d'Ivoire", nossa função limpa para "cote divoire"
     "croacia": "croatia",
     "curacau": "curacao",
     "egito": "egypt",
@@ -177,6 +105,7 @@ function formatarDataISO(dataString) {
     
     const dataLower = dataString.toLowerCase();
 
+    // 1. Se vier no formato do site: "Quinta-feira, 11 de Junho de 2026"
     if (dataLower.includes(' de ')) {
         const meses = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
@@ -199,6 +128,7 @@ function formatarDataISO(dataString) {
         }
     }
 
+    // 2. Se vier como DD/MM/YYYY
     if (dataString.includes('/')) {
         const partes = dataString.split('/');
         if (partes.length === 3) {
@@ -206,6 +136,7 @@ function formatarDataISO(dataString) {
         }
     }
     
+    // 3. Se já vier como ISO padrão da API
     if (dataString.length >= 10) {
         return dataString.substring(0, 10);
     }
@@ -214,12 +145,13 @@ function formatarDataISO(dataString) {
 }
 
 // =====================================================================
-// 3. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
+// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
 cron.schedule('*/10 * * * *', async () => {
     console.log('⚽ Verificando e recalculando resultados (World Cup)...');
     
     try {
+        // Alterado para WC (World Cup)
         const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
@@ -265,8 +197,10 @@ cron.schedule('*/10 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
+                    // Trava de Data
                     const bateuData = dataPalpite ? (dataPalpite === dataAPI) : true;
 
+                    // Lógica Bi-direcional (Permite inverter Casa/Fora)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
 
@@ -321,10 +255,11 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 4. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI)
+// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const API_KEY = '99f3722bea4049eea78883baeada90cd';
+    
     const query = encodeURIComponent('Copa do Mundo FIFA 2026');
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
 
@@ -332,77 +267,257 @@ app.get('/noticias', async (req, res) => {
         const response = await fetch(url);
         const data = await response.json();
 
+        console.log("Status NewsAPI:", data.status, "| Total Encontrado:", data.totalResults);
+
         if (data.status === 'ok' && data.articles && data.articles.length > 0) {
-            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles', 'diariodocentrodomundo', 'pragmatismopolitico', 'abril'];
+            
+            // 1. AS LISTAS NEGRAS (BLACKLISTS)
+            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles', 'diariodocentrodomundo', 'pragmatismopolitico', 'abril']; // Nova lista de bloqueio de fontes
+            const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
+            const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
+            const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
+            const proibidoOutrosEsportes = ['basquete', 'vôlei', 'tênis', 'futsal', 'rugby', 'fórmula 1', 'esports', 'ginástica', 'olimpíadas'];
+            const proibidoTimesBR = ['flamengo', 'corinthians', 'palmeiras', 'são paulo', 'vasco', 'santos', 'cruzeiro', 'atlético-mg', 'grêmio', 'internacional', 'botafogo', 'fluminense', 'brasileirão', 'libertadores'];
+            const proibidoPolitica = ['lula', 'bolsonaro', 'congresso', 'stf', 'eleição', 'política', 'governo', 'deputado'];
+
+            // Função auxiliar para checar se alguma palavra da lista está no texto
             const temPalavra = (texto, lista) => lista.some(palavra => texto.includes(palavra));
 
+            // 2. FILTRAGEM DE PENTE FINO
             let artigosValidos = data.articles.filter(article => {
                 const titulo = article.title ? article.title.toLowerCase() : '';
                 const desc = article.description ? article.description.toLowerCase() : '';
                 const textoCompleto = `${titulo} ${desc}`; 
-                const sourceName = article.source?.name?.toLowerCase() || '';
-                const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
-                const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
                 
-                return basicoOk && falaDeCopa && !proibidoSites.some(site => sourceName.includes(site));
+                const sourceName = article.source?.name?.toLowerCase() || '';
+                const articleUrl = article.url?.toLowerCase() || '';
+                
+                // Validação Básica
+                const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
+                
+                // Validação de Tema (Deve ter a ver com copa)
+                const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
+
+                // Verificando as Blacklists
+                const isSiteProibido = proibidoSites.some(site => sourceName.includes(site) || articleUrl.includes(site));
+                const isAposta = temPalavra(textoCompleto, proibidoApostas);
+                const isFeminino = temPalavra(textoCompleto, proibidoFeminino);
+                const isOutroAno = temPalavra(textoCompleto, proibidoOutrosAnos);
+                const isOutroEsporte = temPalavra(textoCompleto, proibidoOutrosEsportes);
+                const isTimeBR = temPalavra(textoCompleto, proibidoTimesBR);
+                const isPolitica = temPalavra(textoCompleto, proibidoPolitica);
+
+                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em NENHUMA blacklist
+                return basicoOk && falaDeCopa && !isSiteProibido && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
             });
             
-            data.articles = artigosValidos.slice(0, 5);
+            if (artigosValidos.length > 0) {
+                // 3. PRIORIZAÇÃO DE SITES GRANDES (Terra foi removido daqui)
+                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn'];
+
+                artigosValidos.forEach(article => {
+                    const sourceName = article.source?.name?.toLowerCase() || '';
+                    const articleUrl = article.url?.toLowerCase() || '';
+                    
+                    const isPremium = sitesPremium.some(site => sourceName.includes(site) || articleUrl.includes(site));
+                    
+                    article.score = Math.random() + (isPremium ? 10 : 0);
+                });
+
+                artigosValidos.sort((a, b) => b.score - a.score);
+                data.articles = artigosValidos.slice(0, 5);
+            } else {
+                data.articles = []; 
+            }
         } else {
             data.articles = []; 
         }
         res.json(data);
     } catch (error) {
-        res.status(500).json({ status: "error", message: "Falha interna" });
+        console.error("Erro na ponte de notícias:", error);
+        res.status(500).json({ status: "error", message: "Falha interna ao buscar notícias" });
     }
 });
 
 // =====================================================================
-// 5. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
+// 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
 // =====================================================================
+
 app.post('/salvar-lote', async (req, res) => {
   try {
     const { user_email, user_name, palpites } = req.body;
+
     const searchResponse = await cloudant.postFind({
       db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+      selector: {
+        type: { "$eq": "cartela_usuario" },
+        user_email: { "$eq": user_email }
+      }
     });
+
     const existingDoc = searchResponse.result.docs[0];
+
     if (existingDoc) {
       existingDoc.palpites_jogos = palpites;
       existingDoc.user_name = user_name;
       existingDoc.timestamp = new Date().toISOString();
+
       await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true });
+      res.status(200).json({ success: true, message: "Cartela atualizada" });
     } else {
-      const novoDocumento = { type: "cartela_usuario", user_email, user_name, palpites_jogos: palpites, pontos_acumulados: 0, timestamp: new Date().toISOString() };
+      const novoDocumento = {
+        type: "cartela_usuario",
+        user_email, user_name, 
+        palpites_jogos: palpites,
+        pontos_acumulados: 0,
+        palpite_final: null,
+        timestamp: new Date().toISOString()
+      };
       await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-      res.status(200).json({ success: true });
+      res.status(200).json({ success: true, message: "Cartela criada" });
     }
-  } catch (error) { res.status(500).json({ success: false }); }
+  } catch (error) {
+    console.error("Erro /salvar-lote:", error);
+    res.status(500).json({ success: false, error: 'Erro ao processar lote' });
+  }
+});
+
+app.post('/salvar-final', async (req, res) => {
+  try {
+    const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+    const dadosDaFinal = { vencedor_campeonato, placar_final };
+
+    if (existingDoc) {
+      existingDoc.palpite_final = dadosDaFinal;
+      existingDoc.timestamp = new Date().toISOString();
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Final salva" });
+    } else {
+      const novoDocumento = {
+        type: "cartela_usuario",
+        user_email, user_name: user_name || user_email.split('@')[0],
+        palpites_jogos: [],
+        pontos_acumulados: 0,
+        palpite_final: dadosDaFinal,
+        timestamp: new Date().toISOString()
+      };
+      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
+      res.status(200).json({ success: true, message: "Cartela criada com a final" });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro palpite final' });
+  }
 });
 
 app.get('/ranking', async (req, res) => {
   try {
-    const response = await cloudant.postFind({ db: DB_NAME, selector: { type: { "$eq": "cartela_usuario" } }, limit: 2000 });
+    const response = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" } },
+      limit: 2000
+    });
+
     const rankingArray = response.result.docs.map(doc => ({
-        email: doc.user_email, nome: doc.user_name, pontos: doc.pontos_acumulados || 0
+        email: doc.user_email,
+        nome: doc.user_name,
+        pontos: doc.pontos_acumulados || 0,
+        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
+        time_coracao: doc.time_coracao || '', 
+        recorde_embaixadinha: doc.recorde_embaixadinha || 0 
     }));
-    rankingArray.sort((a, b) => b.pontos - a.pontos);
+
+    rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
     res.status(200).json({ success: true, ranking: rankingArray });
-  } catch (error) { res.status(500).json({ success: false }); }
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
+  }
+});
+
+app.post('/buscar-cartela', async (req, res) => {
+  try {
+    const { user_email } = req.body;
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
+  }
 });
 
 // =====================================================================
-// 6. ROTA DO AGENTE DE IA NATIVO
+// ROTAS DO PERFIL (Salvar Time do Coração e Embaixadinhas)
+// =====================================================================
+app.post('/atualizar-perfil', async (req, res) => {
+  try {
+    const { user_email, time_coracao, recorde_embaixadinha } = req.body;
+    
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+
+    if (existingDoc) {
+      // Atualiza apenas se o dado foi enviado pelo site
+      if (time_coracao !== undefined && time_coracao !== "") {
+          existingDoc.time_coracao = time_coracao;
+      }
+      if (recorde_embaixadinha !== undefined) {
+          // Só atualiza se o recorde novo for maior que o antigo salvo no banco
+          if (!existingDoc.recorde_embaixadinha || recorde_embaixadinha > existingDoc.recorde_embaixadinha) {
+              existingDoc.recorde_embaixadinha = recorde_embaixadinha;
+          }
+      }
+      
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Perfil atualizado!" });
+    } else {
+      res.status(404).json({ success: false, error: 'Usuário não encontrado. Crie um palpite primeiro.' });
+    }
+  } catch (error) {
+    console.error("Erro ao atualizar perfil:", error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
+// =====================================================================
+// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
     const { mensagem, historico } = req.body;
+    
     if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
 
     try {
         const agenteEndpoint = process.env.ICA_AGENT_URL; 
-        let promptFinal = historico && historico.length > 0 ? `CONTEXTO: ${JSON.stringify(historico)}\nPERGUNTA: ${mensagem}` : mensagem;
+        
+        // --- FORMATAÇÃO PROFISSIONAL DE HISTÓRICO ---
+        let promptFinal = "";
+
+        if (historico && historico.length > 0) {
+            promptFinal = "CONTEXTO DA CONVERSA ATUAL:\n";
+            historico.forEach(msg => {
+                const autor = msg.role === 'user' ? "Usuário" : "Assistente";
+                promptFinal += `[${autor}]: ${msg.content}\n`;
+            });
+            promptFinal += "\n--- FIM DO CONTEXTO ---\n\n";
+            promptFinal += `PERGUNTA ATUAL: ${mensagem}\n\n`;
+            promptFinal += "INSTRUÇÃO: Se a PERGUNTA ATUAL for uma confirmação (como 'sim'), use o CONTEXTO acima para dar a resposta detalhada imediatamente.";
+        } else {
+            promptFinal = mensagem;
+        }
+        // --------------------------------------------
 
         const rpcPayload = {
             jsonrpc: "2.0",
@@ -421,16 +536,178 @@ app.post('/agente-bolao', async (req, res) => {
         });
 
         const data = await response.json();
+        
+        if (data.error) {
+            console.error("Erro JSON-RPC da IBM:", data.error);
+            return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data.error });
+        }
+
         res.json({ resposta: data.result }); 
+
     } catch (error) {
-        res.status(500).json({ error: "Erro no agente." });
+        console.error("Erro no Agente:", error);
+        res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário." });
     }
 });
 
 // =====================================================================
-// 7. INICIALIZAÇÃO DO SERVIDOR
+// 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
+// =====================================================================
+
+app.post('/chat', async (req, res) => {
+    try {
+        const { user_email, user_name, mensagem } = req.body;
+        const novoDocumento = {
+            type: "chat_message",
+            user_email, user_name, mensagem,
+            timestamp: new Date().toISOString(),
+            likes: [],  
+            replies: [] 
+        };
+        await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
+        res.status(200).json({ success: true, message: "Mensagem postada!" });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao postar mensagem' });
+    }
+});
+
+app.get('/chat', async (req, res) => {
+    try {
+        const response = await cloudant.postFind({
+            db: DB_NAME,
+            selector: { type: { "$eq": "chat_message" } },
+            limit: 100 
+        });
+        let mensagens = response.result.docs;
+        mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        res.status(200).json({ success: true, mensagens: mensagens });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao carregar o mural' });
+    }
+});
+
+app.post('/chat/like', async (req, res) => {
+    try {
+        const { msg_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+        
+        if (!doc.likes) doc.likes = [];
+        const index = doc.likes.indexOf(user_email);
+        
+        if (index > -1) doc.likes.splice(index, 1); 
+        else doc.likes.push(user_email); 
+
+        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao curtir' });
+    }
+});
+
+app.post('/chat/reply', async (req, res) => {
+    try {
+        const { msg_id, user_email, user_name, mensagem } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        if (!doc.replies) doc.replies = [];
+        
+        doc.replies.push({
+            reply_id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+            user_email, 
+            user_name, 
+            mensagem,
+            timestamp: new Date().toISOString(),
+            likes: [] 
+        });
+
+        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao responder' });
+    }
+});
+
+app.post('/chat/reply/like', async (req, res) => {
+    try {
+        const { msg_id, reply_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+        const reply = doc.replies.find(r => r.reply_id === reply_id);
+        
+        if (reply) {
+            if (!reply.likes) reply.likes = [];
+            const index = reply.likes.indexOf(user_email);
+            
+            if (index > -1) reply.likes.splice(index, 1); 
+            else reply.likes.push(user_email); 
+            
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+        }
+        res.status(200).json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Erro ao curtir resposta' });
+    }
+});
+
+app.post('/chat/delete', async (req, res) => {
+    try {
+        const { msg_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        if (doc.user_email === user_email) {
+            await cloudant.deleteDocument({
+                db: DB_NAME,
+                docId: doc._id,
+                rev: doc._rev
+            });
+            res.status(200).json({ success: true });
+        } else {
+            res.status(403).json({ success: false, error: 'Não autorizado' });
+        }
+    } catch (error) {
+        console.error("Erro ao apagar:", error);
+        res.status(500).json({ success: false, error: 'Erro ao apagar mensagem' });
+    }
+});
+
+app.post('/chat/reply/delete', async (req, res) => {
+    try {
+        const { msg_id, reply_id, user_email } = req.body;
+        
+        // Pega o post original
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+
+        if (!doc.replies) {
+            return res.status(404).json({ success: false, error: 'Nenhuma resposta encontrada' });
+        }
+
+        // Acha o índice da resposta específica
+        const replyIndex = doc.replies.findIndex(r => r.reply_id === reply_id);
+        
+        if (replyIndex === -1) {
+            return res.status(404).json({ success: false, error: 'Resposta não encontrada' });
+        }
+
+        // Verifica se o usuário logado é o dono da resposta
+        if (doc.replies[replyIndex].user_email === user_email) {
+            // Remove a resposta da array
+            doc.replies.splice(replyIndex, 1);
+
+            // Atualiza o documento no banco de dados
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+            res.status(200).json({ success: true });
+        } else {
+            res.status(403).json({ success: false, error: 'Não autorizado' });
+        }
+    } catch (error) {
+        console.error("Erro ao apagar resposta:", error);
+        res.status(500).json({ success: false, error: 'Erro ao apagar resposta' });
+    }
+});
+
+// =====================================================================
+// 6. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Servidor Node.js (Bolão + MCP) rodando na porta ${port}`);
+  console.log(`Servidor Node.js (Bolão + Cron + Chat) rodando na porta ${port}`);
 });
