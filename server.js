@@ -494,9 +494,12 @@ app.post('/atualizar-perfil', async (req, res) => {
 // =====================================================================
 // ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
+// =====================================================================
+// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - Com Memória de Contexto)
+// =====================================================================
 app.post('/agente-bolao', async (req, res) => {
-    // 1. Agora também recebemos o sessionId do site
-    const { mensagem, sessionId } = req.body; 
+    // Agora recebemos também o "historico"
+    const { mensagem, historico } = req.body;
     
     if (!mensagem) {
         return res.status(400).json({ error: "Mensagem vazia." });
@@ -505,13 +508,25 @@ app.post('/agente-bolao', async (req, res) => {
     try {
         const agenteEndpoint = 'https://servicesessentials.ibm.com/agenticapps/a2a/61504138-6c1c-47fe-a774-05ba9b829b6c/agents/19469445-9226-4e9c-a450-142f3403806d'; 
         
+        // --- MÁGICA DA MEMÓRIA AQUI ---
+        let promptFinal = mensagem;
+        
+        if (historico && historico.length > 0) {
+            let contexto = "Histórico recente da nossa conversa para você ter contexto:\n";
+            historico.forEach(msg => {
+                contexto += `${msg.role === 'user' ? 'Usuário' : 'Você (Especialista)'}: ${msg.content}\n`;
+            });
+            contexto += `\nAgora, responda a esta nova pergunta do usuário levando o histórico acima em consideração:\nNova Pergunta: ${mensagem}`;
+            
+            promptFinal = contexto;
+        }
+        // ------------------------------
+
         const rpcPayload = {
             jsonrpc: "2.0",
             method: "message/send", 
             params: {
-                message: mensagem,
-                // 2. Enviamos o crachá de memória para a IBM!
-                sessionId: sessionId || "sessao-bolao-padrao" 
+                message: promptFinal // Mandamos o pacotão com a memória
             },
             id: 1 
         };
@@ -527,14 +542,11 @@ app.post('/agente-bolao', async (req, res) => {
 
         const data = await response.json();
         
-        // Se a IBM retornar um erro de RPC (ex: método não encontrado), a gente loga para debugar
         if (data.error) {
             console.error("Erro JSON-RPC da IBM:", data.error);
             return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data.error });
         }
 
-        // Devolve a resposta limpa para o front-end
-        // O resultado costuma vir dentro de data.result.output ou data.result
         res.json({ resposta: data.result }); 
 
     } catch (error) {
