@@ -494,26 +494,35 @@ app.post('/atualizar-perfil', async (req, res) => {
 // =====================================================================
 // ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
-// =====================================================================
-// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - Com Memória de Contexto)
-// =====================================================================
 app.post('/agente-bolao', async (req, res) => {
     const { mensagem, historico } = req.body;
+    
+    if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
 
     try {
-        // Substitua a URL fixa por esta linha abaixo:
         const agenteEndpoint = process.env.ICA_AGENT_URL; 
         
-        // Se por algum motivo a variável não estiver lá, o servidor avisa:
-        if (!agenteEndpoint) {
-            console.error("ERRO: A variável ICA_AGENT_URL não foi configurada no Renderrrr!");
-            return res.status(500).json({ error: "Configuração do agente ausente." });
+        // --- FORMATAÇÃO PROFISSIONAL DE HISTÓRICO ---
+        let promptFinal = "";
+
+        if (historico && historico.length > 0) {
+            promptFinal = "CONTEXTO DA CONVERSA ATUAL:\n";
+            historico.forEach(msg => {
+                const autor = msg.role === 'user' ? "Usuário" : "Assistente";
+                promptFinal += `[${autor}]: ${msg.content}\n`;
+            });
+            promptFinal += "\n--- FIM DO CONTEXTO ---\n\n";
+            promptFinal += `PERGUNTA ATUAL: ${mensagem}\n\n`;
+            promptFinal += "INSTRUÇÃO: Se a PERGUNTA ATUAL for uma confirmação (como 'sim'), use o CONTEXTO acima para dar a resposta detalhada imediatamente.";
+        } else {
+            promptFinal = mensagem;
         }
+        // --------------------------------------------
 
         const rpcPayload = {
             jsonrpc: "2.0",
             method: "message/send", 
-            params: { message: mensagem }, // (ou o prompt com memória que montamos)
+            params: { message: promptFinal },
             id: 1 
         };
 
