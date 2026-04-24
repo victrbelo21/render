@@ -1,8 +1,6 @@
 {
   "name": "bolao-backend",
   "version": "1.0.0",
-  "description": "API Intermediaria para o Cloudant, Notícias e MCP",
-  "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"
