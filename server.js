@@ -507,11 +507,11 @@ app.post('/agente-bolao', async (req, res) => {
         // Empacotamento rigoroso no formato JSON-RPC 2.0
         const rpcPayload = {
             jsonrpc: "2.0",
-            method: "invoke", // Método padrão para invocar agentes no ICA
+            method: "message/send", // A chave mestra que a IBM nos deu!
             params: {
-                input: mensagem 
+                message: mensagem 
             },
-            id: 1 // Um ID qualquer para rastrear a requisição
+            id: 1 
         };
 
         const response = await fetch(agenteEndpoint, {
