@@ -8,7 +8,9 @@ const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 const app = express();
 
 // Configuração de segurança e parse
-app.use(cors());
+app.use(cors({
+    origin: ['https://pages.github.ibm.com']
+}));
 app.use(express.json());
 
 // =====================================================================
