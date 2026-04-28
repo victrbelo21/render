@@ -652,7 +652,7 @@ app.post('/abrir-pacote', async (req, res) => {
         });
 
         // 5. Salva no banco e atualiza a data de hoje
-        userDoc.album.ultimo_pacotinho = hoje;
+        userDoc.album.ultimo_pacotinho = cicloAtual;
         await cloudant.putDocument({ db: DB_NAME, docId: userDoc._id, document: userDoc });
 
         // Devolve pro site as listas separadas para fazermos as animações visuais
