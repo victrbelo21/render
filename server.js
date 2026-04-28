@@ -577,6 +577,99 @@ app.post('/atualizar-perfil', async (req, res) => {
 });
 
 // =====================================================================
+// ROTA DO ÁLBUM (Abrir Pacotinho Diário)
+// =====================================================================
+app.post('/abrir-pacote', async (req, res) => {
+    try {
+        const { user_email } = req.body;
+        
+        const searchResponse = await cloudant.postFind({
+            db: DB_NAME,
+            selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+        });
+
+        const userDoc = searchResponse.result.docs[0];
+        if (!userDoc) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+
+        // 1. Inicializa o álbum se o usuário ainda não tiver
+        if (!userDoc.album) {
+            userDoc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
+        }
+
+        // 2. Trava de Segurança (Virada ao MEIO-DIA de São Paulo)
+        // Pega a hora exata em SP e cria um objeto Date
+        const stringSP = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" });
+        const dataSP = new Date(stringSP);
+        
+        // Subtrai 12 horas da conta. 
+        // Se for 11h da manhã do dia 15, o código enxerga como 23h do dia 14.
+        dataSP.setHours(dataSP.getHours() - 12);
+        
+        // Monta a string do ciclo (Ex: "2026-06-15")
+        const ano = dataSP.getFullYear();
+        const mes = String(dataSP.getMonth() + 1).padStart(2, '0');
+        const dia = String(dataSP.getDate()).padStart(2, '0');
+        const cicloAtual = `${ano}-${mes}-${dia}`;
+        
+        if (userDoc.album.ultimo_pacotinho === cicloAtual) {
+            return res.status(400).json({ success: false, error: 'O carteiro só passa ao meio-dia. Volte mais tarde!' });
+        }
+
+        // 3. Motor de Probabilidade (Raridade)
+        const figurinhasSorteadas = [];
+        const QTD_POR_PACOTE = 5;
+
+        for (let i = 0; i < QTD_POR_PACOTE; i++) {
+            const chance = Math.random() * 100; // Sorteia um número de 0 a 100
+            let figurinhaSorteada;
+
+            if (chance < 5) {
+                // 5% de chance: Figurinhas Lendárias (IDs 81 a 86)
+                figurinhaSorteada = Math.floor(Math.random() * (86 - 81 + 1)) + 81;
+            } else if (chance < 25) {
+                // 20% de chance: Figurinhas Raras (IDs 61 a 80)
+                figurinhaSorteada = Math.floor(Math.random() * (80 - 61 + 1)) + 61;
+            } else {
+                // 75% de chance: Figurinhas Comuns (IDs 1 a 60)
+                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
+            }
+            figurinhasSorteadas.push(figurinhaSorteada);
+        }
+
+        // 4. Separa o que é nova (vai colar) do que é repetida
+        const novasParaColar = [];
+        const novasRepetidas = [];
+
+        figurinhasSorteadas.forEach(fig => {
+            // Verifica se a figurinha já está colada no banco OU se foi sorteada repetida dentro deste mesmo pacotinho
+            if (userDoc.album.coladas.includes(fig) || novasParaColar.includes(fig)) {
+                novasRepetidas.push(fig);
+                userDoc.album.repetidas.push(fig);
+            } else {
+                novasParaColar.push(fig);
+                userDoc.album.coladas.push(fig);
+            }
+        });
+
+        // 5. Salva no banco e atualiza a data de hoje
+        userDoc.album.ultimo_pacotinho = hoje;
+        await cloudant.putDocument({ db: DB_NAME, docId: userDoc._id, document: userDoc });
+
+        // Devolve pro site as listas separadas para fazermos as animações visuais
+        res.status(200).json({ 
+            success: true, 
+            sorteadas: figurinhasSorteadas,
+            novas: novasParaColar,
+            repetidas: novasRepetidas 
+        });
+
+    } catch (error) {
+        console.error("Erro ao abrir pacote:", error);
+        res.status(500).json({ success: false, error: 'Erro ao gerar figurinhas.' });
+    }
+});
+
+// =====================================================================
 // ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
