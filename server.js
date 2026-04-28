@@ -36,6 +36,12 @@ const TEMPO_CACHE_MINUTOS = 5;
 const ID_CONTROLE_JOGOS = 'controle_processamento_jogos';
 
 // =====================================================================
+// CACHE DE NOTÍCIAS (1x por dia)
+// =====================================================================
+let noticiasCache = null;
+let ultimaDataNoticias = ""; // Armazena a data no formato "YYYY-MM-DD"
+
+// =====================================================================
 // Configuração API Football-Data.org
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = process.env.FOOTBALL_DATA_TOKEN;
@@ -309,6 +315,15 @@ cron.schedule('*/10 * * * *', async () => {
 // 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
+    const hoje = new Date().toISOString().split('T')[0]; // Pega a data atual "2026-06-11"
+
+    // Se já temos as notícias guardadas e a data de hoje é a mesma da última busca, não chama a API
+    if (noticiasCache && ultimaDataNoticias === hoje) {
+        console.log("📰 Servindo notícias do dia direto do cache!");
+        return res.json(noticiasCache);
+    }
+
+    console.log("🌐 Buscando notícias frescas na NewsAPI para o novo dia...");
     const API_KEY = process.env.NEWS_API_KEY;
     
     const query = encodeURIComponent('Copa do Mundo FIFA 2026');
@@ -383,6 +398,10 @@ app.get('/noticias', async (req, res) => {
         } else {
             data.articles = []; 
         }
+        // Antes de enviar, guarda na memória e salva a data de hoje
+        noticiasCache = data;
+        ultimaDataNoticias = hoje;
+        
         res.json(data);
     } catch (error) {
         console.error("Erro na ponte de notícias:", error);
