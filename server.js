@@ -17,11 +17,11 @@ app.use(express.json());
 // 1. AUTENTICAÇÃO COM A IBM CLOUD (Cloudant)
 // =====================================================================
 const authenticator = new IamAuthenticator({
-  apikey: process.env.CLOUDANT_APIKEY
+    apikey: process.env.CLOUDANT_APIKEY
 });
 
 const cloudant = new CloudantV1({
-  authenticator: authenticator
+    authenticator: authenticator
 });
 
 cloudant.setServiceUrl(process.env.CLOUDANT_URL);
