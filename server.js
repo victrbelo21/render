@@ -318,16 +318,16 @@ app.get('/noticias', async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0]; // Pega a data atual "2026-06-11"
 
     // Se já temos as notícias guardadas e a data de hoje é a mesma da última busca, não chama a API
-    if (noticiasCache && ultimaDataNoticias === hoje) {
-        console.log("📰 Servindo notícias do dia direto do cache!");
-        return res.json(noticiasCache);
-    }
+//    if (noticiasCache && ultimaDataNoticias === hoje) {
+//        console.log("📰 Servindo notícias do dia direto do cache!");
+//        return res.json(noticiasCache);
+//    }
 
     console.log("🌐 Buscando notícias frescas na NewsAPI para o novo dia...");
     const API_KEY = process.env.NEWS_API_KEY;
     
     const query = encodeURIComponent('Copa do Mundo FIFA 2026');
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
+    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=100&apiKey=${API_KEY}`;
 
     try {
         const response = await fetch(url);
@@ -391,7 +391,7 @@ app.get('/noticias', async (req, res) => {
                 });
 
                 artigosValidos.sort((a, b) => b.score - a.score);
-                data.articles = artigosValidos.slice(0, 5);
+                //data.articles = artigosValidos.slice(0, 5);
             } else {
                 data.articles = []; 
             }
