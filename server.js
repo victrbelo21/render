@@ -533,7 +533,7 @@ app.post('/buscar-cartela', async (req, res) => {
     });
 
     const existingDoc = searchResponse.result.docs[0];
-    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [] });
+    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [], album: existingDoc ? existingDoc.album : null });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
   }
