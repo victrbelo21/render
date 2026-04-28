@@ -28,7 +28,7 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 // Configuração API Football-Data.org
 // =====================================================================
-const FOOTBALL_DATA_TOKEN = '9e96df3fa47d4d9881395f7a1f607370';
+const FOOTBALL_DATA_TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
 // Dicionário Oficial - Copa do Mundo 2026 (Sem acentos do lado esquerdo)
 const dicionarioTimes = {
@@ -258,7 +258,7 @@ cron.schedule('*/10 * * * *', async () => {
 // 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    const API_KEY = '99f3722bea4049eea78883baeada90cd';
+    const API_KEY = process.env.NEWS_API_KEY;
     
     const query = encodeURIComponent('Copa do Mundo FIFA 2026');
     const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=50&apiKey=${API_KEY}`;
