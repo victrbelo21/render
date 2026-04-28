@@ -202,6 +202,7 @@ cron.schedule('*/10 * * * *', async () => {
         });
 
         const cartelas = userDocs.result.docs;
+        const documentosParaAtualizar = [];
 
         for (let doc of cartelas) {
             let pontosTotalCalculado = 0;
@@ -271,9 +272,34 @@ cron.schedule('*/10 * * * *', async () => {
 
             if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
                 doc.pontos_acumulados = pontosTotalCalculado;
-                await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+                documentosParaAtualizar.push(doc);
             }
         }
+
+        // =====================================================================
+        // O ENVIO EM MASSA (Bulk Docs) E ATUALIZAÇÃO DO CONTROLE
+        // =====================================================================
+        if (documentosParaAtualizar.length > 0) {
+            // Adiciona os IDs dos jogos novos na lista de processados
+            jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
+            
+            // Coloca o documento de controle dentro da mesma caixa de envio das cartelas
+            documentosParaAtualizar.push(controleDoc);
+
+            // Bate na porta do Cloudant UMA única vez com tudo
+            await cloudant.postBulkDocs({
+                db: DB_NAME,
+                bulkDocs: { docs: documentosParaAtualizar }
+            });
+            console.log(`📦 Atualização em massa concluída! ${documentosParaAtualizar.length} documentos salvos (incluindo controle).`);
+            
+        } else if (jogosOficiais.length > 0) {
+            // Se jogos terminaram, mas nenhum usuário pontuou ou teve mudança na cartela
+            jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
+            await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
+            console.log('✅ Jogos registrados no controle, mas nenhuma cartela precisou de atualização.');
+        }
+        
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
     }
