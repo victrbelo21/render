@@ -28,6 +28,13 @@ cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
 // =====================================================================
+// CACHE DO RANKING
+// =====================================================================
+let rankingCache = null;
+let ultimaAtualizacaoCache = 0;
+const TEMPO_CACHE_MINUTOS = 5;
+
+// =====================================================================
 // Configuração API Football-Data.org
 // =====================================================================
 const FOOTBALL_DATA_TOKEN = process.env.FOOTBALL_DATA_TOKEN;
@@ -419,6 +426,16 @@ app.post('/salvar-final', async (req, res) => {
 
 app.get('/ranking', async (req, res) => {
   try {
+    // 1. Verifica se o cache existe e se ainda está no prazo de validade
+    const agora = Date.now();
+    const tempoPassado = (agora - ultimaAtualizacaoCache) / 1000 / 60;
+    
+    if (rankingCache && tempoPassado < TEMPO_CACHE_MINUTOS) {
+        console.log("⚡ Servindo ranking direto do cache da memória!");
+        return res.status(200).json({ success: true, ranking: rankingCache });
+    }
+
+    console.log("🐌 Buscando ranking direto no Cloudant...");
     const response = await cloudant.postFind({
       db: DB_NAME,
       selector: { type: { "$eq": "cartela_usuario" } },
@@ -435,6 +452,11 @@ app.get('/ranking', async (req, res) => {
     }));
 
     rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
+    
+    // 2. Guarda o resultado fresco no cache e zera o cronômetro
+    rankingCache = rankingArray;
+    ultimaAtualizacaoCache = Date.now();
+
     res.status(200).json({ success: true, ranking: rankingArray });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
