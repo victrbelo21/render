@@ -33,6 +33,7 @@ const DB_NAME = 'palpites_2026';
 let rankingCache = null;
 let ultimaAtualizacaoCache = 0;
 const TEMPO_CACHE_MINUTOS = 5;
+const ID_CONTROLE_JOGOS = 'controle_processamento_jogos';
 
 // =====================================================================
 // Configuração API Football-Data.org
@@ -157,10 +158,20 @@ function formatarDataISO(dataString) {
 // 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
 // =====================================================================
 cron.schedule('*/10 * * * *', async () => {
-    console.log('⚽ Verificando e recalculando resultados (World Cup)...');
+    console.log('⚽ Verificando novos resultados da Copa...');
     
     try {
-        // Alterado para WC (World Cup)
+        // 1. Busca o documento de controle no Cloudant
+        let controleDoc;
+        try {
+            controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
+        } catch (e) {
+            // Se o documento não existir ainda, ele cria um novo para começar o histórico
+            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], type: "config" };
+            await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
+        }
+
+        // 2. Busca jogos finalizados na API
         const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
@@ -172,12 +183,17 @@ cron.schedule('*/10 * * * *', async () => {
             return;
         }
         
-        const jogosOficiais = data.matches || [];
+        const jogosDaAPI = data.matches || [];
+        
+        // Filtra apenas os jogos que a API diz que acabaram mas que NÃO estão na nossa lista do Cloudant
+        const jogosOficiais = jogosDaAPI.filter(jogo => !controleDoc.jogos_processados.includes(jogo.id));
 
         if (jogosOficiais.length === 0) {
-            console.log('Nenhum jogo novo finalizado no momento.');
+            console.log('✅ Tudo atualizado. Nenhum jogo novo para pontuar.');
             return;
         }
+
+        console.log(`🎯 Encontrados ${jogosOficiais.length} novos jogos para processar!`);
         
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
