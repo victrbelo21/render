@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch'); 
 const cron = require('node-cron');
-const cheerio = require('cheerio');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
@@ -313,74 +312,51 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Web Scraping - Modo Rede de Arrasto)
+// 3. ROTA DE NOTÍCIAS (Via Ponte Google News - 100% FIFA)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    console.log("🌐 Raspando notícias em tempo real direto da FIFA...");
+    console.log("🌐 Buscando notícias oficiais da FIFA via ponte RSS...");
     
     try {
-        const fifaUrl = 'https://www.fifa.com/pt/cat/1aQDyhkYnKhkAW347zYi4Y';
+        // 1. URL do Google News filtrada apenas para o domínio da FIFA e termo de busca
+        const query = encodeURIComponent('site:fifa.com "Copa do Mundo 2026"');
+        const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
         
-        // Cabeçalhos reforçados para fingir muito bem que somos um navegador Chrome real no Brasil
-        const response = await fetch(fifaUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-            }
-        });
+        // 2. Usamos o serviço gratuito rss2json para converter o XML da Google em JSON fácil de ler
+        const apiConverter = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
 
-        const html = await response.text();
-        
-        // DEBUG: Imprime o comecinho do HTML. Se aparecer palavras como "Access Denied" ou "Cloudflare", fomos pegos.
-        console.log("🔍 Raio-X do HTML recebido:", html.substring(0, 200).replace(/\n/g, ' '));
+        const response = await fetch(apiConverter);
+        const data = await response.json();
 
-        const $ = cheerio.load(html);
-        const artigos = [];
-
-        // Varre TODOS os links <a> da página
-        $('a').each((i, element) => {
-            const link = $(element).attr('href');
-            
-            // Ignora links vazios ou de navegação inútil
-            if (!link || link === '#' || link.startsWith('javascript')) return;
-
-            // Puxa QUALQUER texto de dentro do link e limpa espaços duplos
-            const titulo = $(element).text().replace(/\s+/g, ' ').trim();
-            
-            // Caça qualquer imagem (pode estar na tag <img> ou <picture><source>)
-            let imgUrl = $(element).find('img').attr('src') || $(element).find('source').attr('srcset') || '';
-            
-            // Limpa formatações estranhas de imagem (como "imagem.jpg 1x, imagem2.jpg 2x")
-            if (imgUrl && imgUrl.includes(' ')) {
-                imgUrl = imgUrl.split(' ')[0];
-            }
-
-            // CRITÉRIO DE OURO: Tem que ter uma imagem, e o texto tem que ter mais de 20 letras (pra não pegar botão de "Clique Aqui")
-            if (titulo.length > 20 && imgUrl && !artigos.find(a => a.title === titulo)) {
+        if (data.status === 'ok' && data.items.length > 0) {
+            const artigos = data.items.map(item => {
+                // O Google News às vezes traz a imagem no campo thumbnail ou enclosure
+                // Se não houver imagem, usamos uma imagem padrão da FIFA ou do seu projeto
+                const imagemPadrao = 'https://www.fifa.com/static/img/fifa-logo.png'; 
                 
-                const fullUrl = link.startsWith('http') ? link : `https://www.fifa.com${link}`;
-                
-                artigos.push({
-                    title: titulo,
-                    url: fullUrl,
-                    urlToImage: imgUrl,
+                return {
+                    title: item.title.split(' - ')[0], // Remove o " - FIFA" que o Google adiciona no fim
+                    url: item.link,
+                    urlToImage: item.thumbnail || item.enclosure?.link || imagemPadrao,
                     source: { name: 'FIFA.com' },
-                    publishedAt: new Date().toISOString() // Data genérica (seu front-end cuida disso)
-                });
-            }
-        });
+                    publishedAt: item.pubDate
+                };
+            });
 
-        console.log(`✅ Scraping concluído. Foram achadas ${artigos.length} matérias possíveis.`);
-
-        res.json({
-            status: 'ok',
-            articles: artigos.slice(0, 5) // Manda os 5 primeiros pro site
-        });
+            console.log(`✅ Sucesso! ${artigos.length} notícias da FIFA encontradas.`);
+            
+            res.json({
+                status: 'ok',
+                articles: artigos.slice(0, 5)
+            });
+        } else {
+            console.log("⚠️ Nenhuma notícia recente encontrada no feed.");
+            res.json({ status: 'ok', articles: [] });
+        }
 
     } catch (error) {
-        console.error("❌ Erro no scraping da FIFA:", error);
-        res.status(500).json({ status: "error", message: "Falha ao raspar site da FIFA" });
+        console.error("❌ Erro ao buscar feed da FIFA:", error);
+        res.status(500).json({ status: "error", message: "Erro na ponte de notícias" });
     }
 });
 
