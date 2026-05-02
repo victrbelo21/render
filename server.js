@@ -1,3 +1,4 @@
+const cheerio = require('cheerio');
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch'); 
@@ -312,100 +313,74 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Proxy Seguro NewsAPI com Filtros Avançados)
+// 3. ROTA DE NOTÍCIAS (Web Scraping Direto - FIFA Oficial)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    const hoje = new Date().toISOString().split('T')[0]; // Pega a data atual "2026-06-11"
-
-    // Se já temos as notícias guardadas e a data de hoje é a mesma da última busca, não chama a API
-//    if (noticiasCache && ultimaDataNoticias === hoje) {
-//        console.log("📰 Servindo notícias do dia direto do cache!");
-//        return res.json(noticiasCache);
-//    }
-
-    console.log("🌐 Buscando notícias frescas na NewsAPI para o novo dia...");
-    const API_KEY = process.env.NEWS_API_KEY;
+    console.log("🌐 Raspando notícias em tempo real direto da FIFA...");
     
-    const query = encodeURIComponent('Copa do Mundo FIFA 2026');
-    const url = `https://newsapi.org/v2/everything?q=${query}&language=pt&sortBy=publishedAt&pageSize=100&apiKey=${API_KEY}`;
-
     try {
-        const response = await fetch(url);
-        const data = await response.json();
-
-        console.log("Status NewsAPI:", data.status, "| Total Encontrado:", data.totalResults);
-
-        if (data.status === 'ok' && data.articles && data.articles.length > 0) {
-            
-            // 1. AS LISTAS NEGRAS (BLACKLISTS)
-            const proibidoSites = ['ig', 'terra', 'metrópoles', 'metropoles', 'diariodocentrodomundo', 'pragmatismopolitico', 'abril']; // Nova lista de bloqueio de fontes
-            const proibidoApostas = ['casino', 'cassino', 'aposta', 'bet', 'odds'];
-            const proibidoFeminino = ['feminina', 'feminino', 'mulheres'];
-            const proibidoOutrosAnos = ['2014', '2018', '2022', '2030', '2034', 'qatar', 'catar', 'rússia', 'áfrica do sul'];
-            const proibidoOutrosEsportes = ['basquete', 'vôlei', 'tênis', 'futsal', 'rugby', 'fórmula 1', 'esports', 'ginástica', 'olimpíadas'];
-            const proibidoTimesBR = ['flamengo', 'corinthians', 'palmeiras', 'são paulo', 'vasco', 'santos', 'cruzeiro', 'atlético-mg', 'grêmio', 'internacional', 'botafogo', 'fluminense', 'brasileirão', 'libertadores'];
-            const proibidoPolitica = ['lula', 'bolsonaro', 'congresso', 'stf', 'eleição', 'política', 'governo', 'deputado'];
-
-            // Função auxiliar para checar se alguma palavra da lista está no texto
-            const temPalavra = (texto, lista) => lista.some(palavra => texto.includes(palavra));
-
-            // 2. FILTRAGEM DE PENTE FINO
-            let artigosValidos = data.articles.filter(article => {
-                const titulo = article.title ? article.title.toLowerCase() : '';
-                const desc = article.description ? article.description.toLowerCase() : '';
-                const textoCompleto = `${titulo} ${desc}`; 
-                
-                const sourceName = article.source?.name?.toLowerCase() || '';
-                const articleUrl = article.url?.toLowerCase() || '';
-                
-                // Validação Básica
-                const basicoOk = article.title && article.title !== '[Removed]' && article.urlToImage && article.description;
-                
-                // Validação de Tema (Deve ter a ver com copa)
-                const falaDeCopa = textoCompleto.includes('copa') || textoCompleto.includes('mundial') || textoCompleto.includes('fifa');
-
-                // Verificando as Blacklists
-                const isSiteProibido = proibidoSites.some(site => sourceName.includes(site) || articleUrl.includes(site));
-                const isAposta = temPalavra(textoCompleto, proibidoApostas);
-                const isFeminino = temPalavra(textoCompleto, proibidoFeminino);
-                const isOutroAno = temPalavra(textoCompleto, proibidoOutrosAnos);
-                const isOutroEsporte = temPalavra(textoCompleto, proibidoOutrosEsportes);
-                const isTimeBR = temPalavra(textoCompleto, proibidoTimesBR);
-                const isPolitica = temPalavra(textoCompleto, proibidoPolitica);
-
-                // Só passa se o básico estiver OK, falar de copa, e NÃO bater em NENHUMA blacklist
-                return basicoOk && falaDeCopa && !isSiteProibido && !isAposta && !isFeminino && !isOutroAno && !isOutroEsporte && !isTimeBR && !isPolitica;
-            });
-            
-            if (artigosValidos.length > 0) {
-                // 3. PRIORIZAÇÃO DE SITES GRANDES (Terra foi removido daqui)
-                const sitesPremium = ['globo', 'ge.globo', 'espn', 'cnn'];
-
-                artigosValidos.forEach(article => {
-                    const sourceName = article.source?.name?.toLowerCase() || '';
-                    const articleUrl = article.url?.toLowerCase() || '';
-                    
-                    const isPremium = sitesPremium.some(site => sourceName.includes(site) || articleUrl.includes(site));
-                    
-                    article.score = Math.random() + (isPremium ? 10 : 0);
-                });
-
-                artigosValidos.sort((a, b) => b.score - a.score);
-                //data.articles = artigosValidos.slice(0, 5);
-            } else {
-                data.articles = []; 
-            }
-        } else {
-            data.articles = []; 
-        }
-        // Antes de enviar, guarda na memória e salva a data de hoje
-        noticiasCache = data;
-        ultimaDataNoticias = hoje;
+        const fifaUrl = 'https://www.fifa.com/pt/cat/1aQDyhkYnKhkAW347zYi4Y';
         
-        res.json(data);
+        // Fazemos a requisição disfarçados de navegador comum para a FIFA não bloquear
+        const response = await fetch(fifaUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+
+        const html = await response.text();
+        const $ = cheerio.load(html); // Carrega o HTML na engine do Cheerio
+        
+        const artigos = [];
+
+        // O Cheerio vai varrer todas as tags <a> (links) da página
+        $('a').each((i, element) => {
+            const link = $(element).attr('href');
+            
+            // Só nos interessam links que pareçam ser de conteúdo (news, tournaments, etc)
+            if (link && (link.includes('/news/') || link.includes('/tournaments/'))) {
+                
+                // A FIFA costuma usar links relativos, então garantimos o domínio absoluto
+                const baseUrl = link.startsWith('http') ? '' : 'https://www.fifa.com';
+                const fullUrl = baseUrl + link;
+                
+                // Caça o texto que estiver dentro de um header ou parágrafo dentro desse link
+                const titulo = $(element).find('h2, h3, h4').first().text().trim() || 
+                               $(element).find('p').first().text().trim();
+                
+                // Caça a imagem (pode estar numa tag <source> do <picture> ou num <img> padrão)
+                let imgUrl = $(element).find('picture source').attr('srcset') || 
+                             $(element).find('img').attr('src') || '';
+                
+                // Se a imagem vier em formato srcset (ex: "img1.jpg 1x, img2.jpg 2x"), pegamos só o primeiro link
+                if (imgUrl && imgUrl.includes(' ')) {
+                    imgUrl = imgUrl.split(' ')[0];
+                }
+
+                // Só colocamos no nosso JSON final se achamos Título, Imagem e se já não adicionamos antes
+                if (titulo && imgUrl && !artigos.find(a => a.title === titulo)) {
+                    artigos.push({
+                        title: titulo,
+                        url: fullUrl,
+                        urlToImage: imgUrl,
+                        source: { name: 'FIFA.com' },
+                        publishedAt: new Date().toISOString() // Data dummy, o frontend formata sozinho
+                    });
+                }
+            }
+        });
+
+        console.log(`✅ Scraping concluído. Foram achadas ${artigos.length} matérias da Copa.`);
+
+        // Entregamos pro seu front-end exatamente o que ele espera, e só os 5 primeiros cards
+        res.json({
+            status: 'ok',
+            articles: artigos.slice(0, 5)
+        });
+
     } catch (error) {
-        console.error("Erro na ponte de notícias:", error);
-        res.status(500).json({ status: "error", message: "Falha interna ao buscar notícias" });
+        console.error("❌ Erro no scraping da FIFA:", error);
+        res.status(500).json({ status: "error", message: "Falha ao raspar site da FIFA" });
     }
 });
 
