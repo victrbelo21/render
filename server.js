@@ -370,11 +370,37 @@ app.get('/noticias', async (req, res) => {
                 link = `https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
             }
 
+            for (let item of listaNoticias) {
+            // 1. Caçador de Título
+            const titulo = item.title || item.headline || item.name || '';
+            
+            // 2. Caçador de Link Mestre
+            let rawLink = item.url || item.link || item.seoPath || item.slug || '';
+            let link = '';
+            
+            if (rawLink) {
+                const partes = rawLink.split('/').filter(p => p.length > 0);
+                const slug = partes[partes.length - 1];
+                link = `https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
+            }
+
             // 3. Caçador de Imagem em Alta Resolução
             let imageUrl = item.image?.src || item.imageUrl || item.thumbnail?.src || item.picture?.url || item.heroImage?.src || '';
 
             if (imageUrl && !imageUrl.startsWith('http')) {
                 imageUrl = `https://digitalhub.fifa.com${imageUrl}`; 
+            }
+
+            // 4. Caçador de Categoria (O "Topinho" da notícia)
+            let categoria = 'FIFA.COM'; // Valor padrão caso a notícia não tenha categoria
+            if (item.label) {
+                categoria = item.label;
+            } else if (item.kicker) {
+                categoria = item.kicker;
+            } else if (item.category) {
+                categoria = typeof item.category === 'string' ? item.category : (item.category.title || item.category.name || 'FIFA.COM');
+            } else if (item.tags && item.tags.length > 0) {
+                categoria = item.tags[0].title || item.tags[0].name || 'FIFA.COM';
             }
 
             const pubDate = item.date || item.publishedDate || item.publishedAt || new Date().toISOString();
@@ -384,10 +410,11 @@ app.get('/noticias', async (req, res) => {
                     title: titulo,
                     url: link,
                     urlToImage: imageUrl,
-                    source: { name: 'FIFA.com' },
+                    source: { name: categoria }, // <--- AQUI A MÁGICA ACONTECE!
                     publishedAt: pubDate
                 });
             }
+        }
         }
 
         console.log(`✅ Bingo! Extraímos ${artigosFormatados.length} matérias, links e imagens perfeitas.`);
