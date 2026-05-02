@@ -313,74 +313,94 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Google News + Extração de Imagem Oficial da FIFA)
+// 3. ROTA DE NOTÍCIAS (Plano C: API Direta da FIFA)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    console.log("🌐 Buscando links recentes da FIFA e extraindo imagens em alta qualidade...");
-    
+    console.log("🌐 Conectando direto na veia da API secreta da FIFA...");
+
     try {
-        // Busca qualquer notícia recente do fifa.com em Português (sem filtros adicionais)
-        const rssUrl = 'https://news.google.com/rss/search?q=site:fifa.com&hl=pt-BR&gl=BR&ceid=BR:pt-419';
-        
-        const response = await fetch(rssUrl);
-        const xml = await response.text();
-        
-        const cheerio = require('cheerio');
-        const $ = cheerio.load(xml, { xmlMode: true });
-        
-        const linksParaVisitar = [];
-        
-        // Pega apenas as 5 notícias mais recentes
-        $('item').slice(0, 5).each((i, element) => {
-            let title = $(element).find('title').text().split(' - ')[0]; // Limpa o " - FIFA" do título
-            let link = $(element).find('link').text();
-            let pubDate = $(element).find('pubDate').text();
-            
-            linksParaVisitar.push({ title, link, pubDate });
+        // O link exato que você pescou no F12
+        const fifaApiUrl = "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0";
+
+        // Fazemos a requisição passando exatamente os mesmos headers que seu Chrome passou
+        const response = await fetch(fifaApiUrl, {
+            headers: {
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+            }
         });
 
-        const artigos = [];
+        if (!response.ok) {
+            throw new Error(`A FIFA barrou a porta: ${response.status}`);
+        }
 
-        // O nosso servidor agora vai entrar na página oficial da FIFA de CADA notícia
-        console.log(`🕵️‍♂️ Entrando em ${linksParaVisitar.length} matérias para extrair as capas oficiais...`);
-        
-        for (let item of linksParaVisitar) {
-            try {
-                // O node-fetch segue o redirecionamento do Google automaticamente e cai direto no site da FIFA
-                const articleReq = await fetch(item.link, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0' }
-                });
-                
-                const articleHtml = await articleReq.text();
-                const $article = cheerio.load(articleHtml);
-                
-                // Puxa a imagem oficial (OpenGraph) que a FIFA deixa exposta para SEO (nunca quebra!)
-                let imageUrl = $article('meta[property="og:image"]').attr('content') || 
-                               $article('meta[name="twitter:image"]').attr('content') || 
-                               ''; // Se não tiver imagem, vai vazia pro front ocultar
+        const data = await response.json();
 
-                // Puxa a URL limpa da matéria direto da fonte
-                let urlOficial = $article('meta[property="og:url"]').attr('content') || item.link;
-
-                artigos.push({
-                    title: item.title,
-                    url: urlOficial,
-                    urlToImage: imageUrl,
-                    source: { name: 'FIFA.com' },
-                    publishedAt: item.pubDate
-                });
-                
-            } catch (e) {
-                console.log(`⚠️ Falha ao extrair imagem da matéria: ${item.title}`);
+        // A FIFA pode retornar o array de matérias dentro de data.articles, data.items ou direto.
+        // Esse código "caça" a array automaticamente.
+        let listaNoticias = [];
+        if (Array.isArray(data)) {
+            listaNoticias = data;
+        } else if (data.articles && Array.isArray(data.articles)) {
+            listaNoticias = data.articles;
+        } else if (data.items && Array.isArray(data.items)) {
+            listaNoticias = data.items;
+        } else {
+            // Varre o JSON e pega a primeira lista que encontrar
+            for (let key in data) {
+                if (Array.isArray(data[key])) {
+                    listaNoticias = data[key];
+                    break;
+                }
             }
         }
 
-        console.log("✅ Matérias e imagens prontas para envio!");
-        res.json({ status: 'ok', articles: artigos });
+        const artigosFormatados = [];
+
+        // Monta os cards traduzindo do padrão FIFA para o padrão do nosso Carrossel
+        for (let item of listaNoticias) {
+            // Caçador de Título
+            const titulo = item.title || item.headline || item.name || '';
+            
+            // Caçador de Link (Geralmente a API manda só a parte final do link, tipo "/pt/news/...")
+            let link = item.url || item.link || item.seoPath || item.slug || '';
+            if (link && !link.startsWith('http')) {
+                link = link.startsWith('/') ? `https://www.fifa.com${link}` : `https://www.fifa.com/pt/news/${link}`;
+            }
+
+            // Caçador de Imagem em Alta Resolução
+            let imageUrl = item.image?.src || item.imageUrl || item.thumbnail?.src || item.picture?.url || item.heroImage?.src || '';
+
+            // Se for link relativo, completa com o domínio
+            if (imageUrl && !imageUrl.startsWith('http')) {
+                imageUrl = `https://digitalhub.fifa.com${imageUrl}`; 
+            }
+
+            const pubDate = item.date || item.publishedDate || item.publishedAt || new Date().toISOString();
+
+            // Só libera a notícia pro carrossel se ela tiver título e imagem
+            if (titulo && imageUrl) {
+                artigosFormatados.push({
+                    title: titulo,
+                    url: link,
+                    urlToImage: imageUrl,
+                    source: { name: 'FIFA.com' },
+                    publishedAt: pubDate
+                });
+            }
+        }
+
+        console.log(`✅ Bingo! Extraímos ${artigosFormatados.length} matérias e imagens perfeitas.`);
+
+        res.json({
+            status: 'ok',
+            articles: artigosFormatados.slice(0, 5) // Envia as 5 primeiras limpas
+        });
 
     } catch (error) {
-        console.error("❌ Erro fatal na rota de notícias:", error);
-        res.status(500).json({ status: "error", message: "Erro interno ao buscar notícias" });
+        console.error("❌ Erro no roubo de dados da API:", error);
+        res.status(500).json({ status: "error", message: "Erro de comunicação com a API secreta da FIFA" });
     }
 });
 
