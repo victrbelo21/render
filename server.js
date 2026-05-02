@@ -391,17 +391,8 @@ app.get('/noticias', async (req, res) => {
                 imageUrl = `https://digitalhub.fifa.com${imageUrl}`; 
             }
 
-            // 4. Caçador de Categoria (O "Topinho" da notícia)
-            let categoria = item.roofline || 'FIFA.COM'; // Valor padrão caso a notícia não tenha categoria
-            if (item.label) {
-                categoria = item.label;
-            } else if (item.kicker) {
-                categoria = item.kicker;
-            } else if (item.category) {
-                categoria = typeof item.category === 'string' ? item.category : (item.category.title || item.category.name || 'FIFA.COM');
-            } else if (item.tags && item.tags.length > 0) {
-                categoria = item.tags[0].title || item.tags[0].name || 'FIFA.COM';
-            }
+            // 4. Caçador de Categoria (O Kicker / Roofline)
+            let categoria = item.roofline || 'FIFA.COM';
 
             const pubDate = item.date || item.publishedDate || item.publishedAt || new Date().toISOString();
 
@@ -410,7 +401,7 @@ app.get('/noticias', async (req, res) => {
                     title: titulo,
                     url: link,
                     urlToImage: imageUrl,
-                    source: { name: categoria }, // <--- AQUI A MÁGICA ACONTECE!
+                    source: { name: categoria }, // Repassa a categoria pro front-end
                     publishedAt: pubDate
                 });
             }
