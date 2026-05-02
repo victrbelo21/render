@@ -313,10 +313,23 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Plano C: API Direta da FIFA - Links Corrigidos)
+// 3. ROTA DE NOTÍCIAS (Plano C: API FIFA + Cache Diário)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    console.log("🌐 Conectando direto na veia da API secreta da FIFA...");
+    // Pega a data atual no formato YYYY-MM-DD
+    const hoje = new Date().toISOString().split('T')[0];
+
+    // 1. O GUARDA-COSTAS (CACHE)
+    // Se já temos cache E a data de hoje é igual a data do cache, devolve da memória instantaneamente!
+    if (noticiasCache && ultimaDataNoticias === hoje) {
+        console.log("📰 Servindo notícias da FIFA na velocidade da luz (direto do Cache)!");
+        return res.json({
+            status: 'ok',
+            articles: noticiasCache.slice(0, 5)
+        });
+    }
+
+    console.log("🌐 Primeiro acesso do dia! Conectando na API secreta da FIFA...");
 
     try {
         const fifaApiUrl = "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0";
@@ -354,27 +367,8 @@ app.get('/noticias', async (req, res) => {
         const artigosFormatados = [];
 
         for (let item of listaNoticias) {
-            // 1. Caçador de Título
             const titulo = item.title || item.headline || item.name || '';
             
-            // 2. Caçador de Link Mestre (Forçando a URL da Copa 2026)
-            let rawLink = item.url || item.link || item.seoPath || item.slug || '';
-            let link = '';
-            
-            if (rawLink) {
-                // Quebra a string nas barras e pega só a última parte (o slug real da matéria)
-                const partes = rawLink.split('/').filter(p => p.length > 0);
-                const slug = partes[partes.length - 1];
-                
-                // Monta a URL exata que você pediu
-                link = `https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
-            }
-
-            for (let item of listaNoticias) {
-            // 1. Caçador de Título
-            const titulo = item.title || item.headline || item.name || '';
-            
-            // 2. Caçador de Link Mestre
             let rawLink = item.url || item.link || item.seoPath || item.slug || '';
             let link = '';
             
@@ -384,16 +378,13 @@ app.get('/noticias', async (req, res) => {
                 link = `https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
             }
 
-            // 3. Caçador de Imagem em Alta Resolução
             let imageUrl = item.image?.src || item.imageUrl || item.thumbnail?.src || item.picture?.url || item.heroImage?.src || '';
 
             if (imageUrl && !imageUrl.startsWith('http')) {
                 imageUrl = `https://digitalhub.fifa.com${imageUrl}`; 
             }
 
-            // 4. Caçador de Categoria (O Kicker / Roofline)
             let categoria = item.roofline || 'FIFA.COM';
-
             const pubDate = item.date || item.publishedDate || item.publishedAt || new Date().toISOString();
 
             if (titulo && imageUrl && link) {
@@ -401,14 +392,17 @@ app.get('/noticias', async (req, res) => {
                     title: titulo,
                     url: link,
                     urlToImage: imageUrl,
-                    source: { name: categoria }, // Repassa a categoria pro front-end
+                    source: { name: categoria },
                     publishedAt: pubDate
                 });
             }
         }
-        }
 
-        console.log(`✅ Bingo! Extraímos ${artigosFormatados.length} matérias, links e imagens perfeitas.`);
+        console.log(`✅ Extraímos ${artigosFormatados.length} matérias. Salvando no cofre (Cache) para o resto do dia!`);
+
+        // 2. SALVA NO CACHE PARA OS PRÓXIMOS USUÁRIOS
+        noticiasCache = artigosFormatados;
+        ultimaDataNoticias = hoje;
 
         res.json({
             status: 'ok',
@@ -417,6 +411,14 @@ app.get('/noticias', async (req, res) => {
 
     } catch (error) {
         console.error("❌ Erro no roubo de dados da API:", error);
+        
+        // Plano de Emergência: Se a FIFA cair ou mudar algo, e tivermos um cache antigo, 
+        // entregamos o antigo pra página não ficar vazia!
+        if (noticiasCache) {
+            console.log("⚠️ API falhou, servindo cache de dias anteriores como resgate.");
+            return res.json({ status: 'ok', articles: noticiasCache.slice(0, 5) });
+        }
+
         res.status(500).json({ status: "error", message: "Erro de comunicação com a API secreta da FIFA" });
     }
 });
