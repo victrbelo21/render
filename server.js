@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch'); 
 const cron = require('node-cron');
+const cheerio = require('cheerio');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
@@ -312,50 +313,65 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Via Ponte Google News - 100% FIFA)
+// 3. ROTA DE NOTÍCIAS (XML Direto do Google News + Cheerio)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    console.log("🌐 Buscando notícias oficiais da FIFA via ponte RSS...");
+    console.log("🌐 Buscando notícias em português da FIFA...");
     
     try {
-        // 1. URL do Google News filtrada apenas para o domínio da FIFA e termo de busca
-        const query = encodeURIComponent('site:fifa.com "Copa do Mundo 2026"');
-        const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
+        // Removido o filtro de Copa do Mundo. Busca TUDO do site fifa.com em PT-BR.
+        const rssUrl = 'https://news.google.com/rss/search?q=site:fifa.com&hl=pt-BR&gl=BR&ceid=BR:pt-419';
         
-        // 2. Usamos o serviço gratuito rss2json para converter o XML da Google em JSON fácil de ler
-        const apiConverter = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
+        // Bate direto no Google News sem usar conversores de terceiros
+        const response = await fetch(rssUrl);
+        const xml = await response.text();
+        
+        // Usamos o Cheerio em modo XML para ler o feed puro (onde as imagens estão intactas!)
+        const cheerio = require('cheerio');
+        const $ = cheerio.load(xml, { xmlMode: true });
+        
+        const artigos = [];
 
-        const response = await fetch(apiConverter);
-        const data = await response.json();
+        // Varrer cada matéria retornada no XML
+        $('item').each((i, element) => {
+            let title = $(element).find('title').text();
+            // Limpa o " - FIFA" que o Google coloca no final de todos os títulos
+            title = title.split(' - ')[0]; 
 
-        if (data.status === 'ok' && data.items.length > 0) {
-            const artigos = data.items.map(item => {
-                // O Google News às vezes traz a imagem no campo thumbnail ou enclosure
-                // Se não houver imagem, usamos uma imagem padrão da FIFA ou do seu projeto
-                const imagemPadrao = 'https://www.fifa.com/static/img/fifa-logo.png'; 
-                
-                return {
-                    title: item.title.split(' - ')[0], // Remove o " - FIFA" que o Google adiciona no fim
-                    url: item.link,
-                    urlToImage: item.thumbnail || item.enclosure?.link || imagemPadrao,
-                    source: { name: 'FIFA.com' },
-                    publishedAt: item.pubDate
-                };
-            });
-
-            console.log(`✅ Sucesso! ${artigos.length} notícias da FIFA encontradas.`);
+            const link = $(element).find('link').text();
+            const pubDate = $(element).find('pubDate').text();
+            const description = $(element).find('description').text(); // Aqui dentro tem o HTML da imagem real!
             
-            res.json({
-                status: 'ok',
-                articles: artigos.slice(0, 5)
+            // Caçador de Imagens: O Google News embute a thumb dentro da tag <img> na <description>
+            let imageUrl = '';
+            const imgMatch = description.match(/<img[^>]+src="([^">]+)"/);
+            if (imgMatch) {
+                imageUrl = imgMatch[1];
+            }
+
+            // Se por acaso a notícia for só texto, usamos uma logo oficial da FIFA que não quebra
+            if (!imageUrl) {
+                imageUrl = 'https://digitalhub.fifa.com/transform/c66c30f4-5f4b-4b2a-8994-0baae1cd88cb/FIFA-Logo';
+            }
+
+            artigos.push({
+                title: title,
+                url: link,
+                urlToImage: imageUrl,
+                source: { name: 'FIFA.com' },
+                publishedAt: pubDate
             });
-        } else {
-            console.log("⚠️ Nenhuma notícia recente encontrada no feed.");
-            res.json({ status: 'ok', articles: [] });
-        }
+        });
+
+        console.log(`✅ Sucesso! ${artigos.length} notícias gerais da FIFA encontradas.`);
+        
+        res.json({
+            status: 'ok',
+            articles: artigos.slice(0, 5) // Retorna só os 5 cards pro seu frontend
+        });
 
     } catch (error) {
-        console.error("❌ Erro ao buscar feed da FIFA:", error);
+        console.error("❌ Erro ao buscar feed XML da FIFA:", error);
         res.status(500).json({ status: "error", message: "Erro na ponte de notícias" });
     }
 });
