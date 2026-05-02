@@ -392,7 +392,7 @@ app.get('/noticias', async (req, res) => {
             }
 
             // 4. Caçador de Categoria (O "Topinho" da notícia)
-            let categoria = 'FIFA.COM'; // Valor padrão caso a notícia não tenha categoria
+            let categoria = item.roofline || 'FIFA.COM'; // Valor padrão caso a notícia não tenha categoria
             if (item.label) {
                 categoria = item.label;
             } else if (item.kicker) {
