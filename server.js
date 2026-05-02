@@ -45,7 +45,7 @@ const ultimaDataNoticias = { pt: "", es: "" };
 // URLs das APIs secretas da FIFA por idioma
 const fifaEndpoints = {
     pt: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0",
-    es: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/3MKHU4nyxZtXHrczk5sg1Z?locale=es&limit=16&skip=0" // URL que você encontrou!
+    es: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/3MKHU4nyxZtXHrczk5sg1Z?locale=es&limit=16&skip=0" 
 };
 
 // =====================================================================
@@ -69,7 +69,7 @@ const dicionarioTimes = {
     "canada": "canada",
     "catar": "qatar",
     "colombia": "colombia",
-    "costa do marfim": "cote divoire", // football-data usa "Côte d'Ivoire", nossa função limpa para "cote divoire"
+    "costa do marfim": "cote divoire", 
     "croacia": "croatia",
     "curacau": "curacao",
     "egito": "egypt",
@@ -317,18 +317,6 @@ cron.schedule('*/10 * * * *', async () => {
         console.error('❌ Erro no Cron Job:', error);
     }
 });
-
-// =====================================================================
-// CACHE DE NOTÍCIAS (1x por dia, por idioma)
-// =====================================================================
-const noticiasCache = { pt: null, es: null };
-const ultimaDataNoticias = { pt: "", es: "" };
-
-// URLs das APIs secretas da FIFA por idioma
-const fifaEndpoints = {
-    pt: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0",
-    es: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/3MKHU4nyxZtXHrczk5sg1Z?locale=es&limit=16&skip=0" // URL que você encontrou!
-};
 
 // =====================================================================
 // 3. ROTA DE NOTÍCIAS (API FIFA Direta + Cache Bilíngue)
