@@ -313,66 +313,74 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (XML Direto do Google News + Cheerio)
+// 3. ROTA DE NOTÍCIAS (Google News + Extração de Imagem Oficial da FIFA)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
-    console.log("🌐 Buscando notícias em português da FIFA...");
+    console.log("🌐 Buscando links recentes da FIFA e extraindo imagens em alta qualidade...");
     
     try {
-        // Removido o filtro de Copa do Mundo. Busca TUDO do site fifa.com em PT-BR.
+        // Busca qualquer notícia recente do fifa.com em Português (sem filtros adicionais)
         const rssUrl = 'https://news.google.com/rss/search?q=site:fifa.com&hl=pt-BR&gl=BR&ceid=BR:pt-419';
         
-        // Bate direto no Google News sem usar conversores de terceiros
         const response = await fetch(rssUrl);
         const xml = await response.text();
         
-        // Usamos o Cheerio em modo XML para ler o feed puro (onde as imagens estão intactas!)
         const cheerio = require('cheerio');
         const $ = cheerio.load(xml, { xmlMode: true });
         
+        const linksParaVisitar = [];
+        
+        // Pega apenas as 5 notícias mais recentes
+        $('item').slice(0, 5).each((i, element) => {
+            let title = $(element).find('title').text().split(' - ')[0]; // Limpa o " - FIFA" do título
+            let link = $(element).find('link').text();
+            let pubDate = $(element).find('pubDate').text();
+            
+            linksParaVisitar.push({ title, link, pubDate });
+        });
+
         const artigos = [];
 
-        // Varrer cada matéria retornada no XML
-        $('item').each((i, element) => {
-            let title = $(element).find('title').text();
-            // Limpa o " - FIFA" que o Google coloca no final de todos os títulos
-            title = title.split(' - ')[0]; 
-
-            const link = $(element).find('link').text();
-            const pubDate = $(element).find('pubDate').text();
-            const description = $(element).find('description').text(); // Aqui dentro tem o HTML da imagem real!
-            
-            // Caçador de Imagens: O Google News embute a thumb dentro da tag <img> na <description>
-            let imageUrl = '';
-            const imgMatch = description.match(/<img[^>]+src="([^">]+)"/);
-            if (imgMatch) {
-                imageUrl = imgMatch[1];
-            }
-
-            // Se por acaso a notícia for só texto, usamos uma logo oficial da FIFA que não quebra
-            if (!imageUrl) {
-                imageUrl = 'https://digitalhub.fifa.com/transform/c66c30f4-5f4b-4b2a-8994-0baae1cd88cb/FIFA-Logo';
-            }
-
-            artigos.push({
-                title: title,
-                url: link,
-                urlToImage: imageUrl,
-                source: { name: 'FIFA.com' },
-                publishedAt: pubDate
-            });
-        });
-
-        console.log(`✅ Sucesso! ${artigos.length} notícias gerais da FIFA encontradas.`);
+        // O nosso servidor agora vai entrar na página oficial da FIFA de CADA notícia
+        console.log(`🕵️‍♂️ Entrando em ${linksParaVisitar.length} matérias para extrair as capas oficiais...`);
         
-        res.json({
-            status: 'ok',
-            articles: artigos.slice(0, 5) // Retorna só os 5 cards pro seu frontend
-        });
+        for (let item of linksParaVisitar) {
+            try {
+                // O node-fetch segue o redirecionamento do Google automaticamente e cai direto no site da FIFA
+                const articleReq = await fetch(item.link, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0' }
+                });
+                
+                const articleHtml = await articleReq.text();
+                const $article = cheerio.load(articleHtml);
+                
+                // Puxa a imagem oficial (OpenGraph) que a FIFA deixa exposta para SEO (nunca quebra!)
+                let imageUrl = $article('meta[property="og:image"]').attr('content') || 
+                               $article('meta[name="twitter:image"]').attr('content') || 
+                               ''; // Se não tiver imagem, vai vazia pro front ocultar
+
+                // Puxa a URL limpa da matéria direto da fonte
+                let urlOficial = $article('meta[property="og:url"]').attr('content') || item.link;
+
+                artigos.push({
+                    title: item.title,
+                    url: urlOficial,
+                    urlToImage: imageUrl,
+                    source: { name: 'FIFA.com' },
+                    publishedAt: item.pubDate
+                });
+                
+            } catch (e) {
+                console.log(`⚠️ Falha ao extrair imagem da matéria: ${item.title}`);
+            }
+        }
+
+        console.log("✅ Matérias e imagens prontas para envio!");
+        res.json({ status: 'ok', articles: artigos });
 
     } catch (error) {
-        console.error("❌ Erro ao buscar feed XML da FIFA:", error);
-        res.status(500).json({ status: "error", message: "Erro na ponte de notícias" });
+        console.error("❌ Erro fatal na rota de notícias:", error);
+        res.status(500).json({ status: "error", message: "Erro interno ao buscar notícias" });
     }
 });
 
