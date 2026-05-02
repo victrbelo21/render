@@ -536,7 +536,14 @@ app.post('/buscar-cartela', async (req, res) => {
     });
 
     const existingDoc = searchResponse.result.docs[0];
-    res.status(200).json({ success: true, palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [], album: existingDoc ? existingDoc.album : null });
+    
+    // Devolve os palpites, o álbum E A WISHLIST!
+    res.status(200).json({ 
+        success: true, 
+        palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [], 
+        album: existingDoc ? existingDoc.album : null,
+        wishlist: existingDoc ? (existingDoc.wishlist || []) : [] // <-- A mágica acontece aqui
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
   }
@@ -582,6 +589,35 @@ app.post('/atualizar-perfil', async (req, res) => {
 // =====================================================================
 // ROTA DO ÁLBUM (Abrir Pacotinho Diário)
 // =====================================================================
+// =====================================================================
+// ROTA DO ÁLBUM (Salvar Wishlist)
+// =====================================================================
+app.post('/atualizar-wishlist', async (req, res) => {
+  try {
+    const { user_email, wishlist } = req.body;
+    
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+
+    if (existingDoc) {
+      // Cria ou substitui o array de wishlist dentro do documento do usuário
+      existingDoc.wishlist = wishlist;
+      
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Wishlist atualizada!" });
+    } else {
+      res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+  } catch (error) {
+    console.error("Erro ao atualizar wishlist:", error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
 app.post('/abrir-pacote', async (req, res) => {
     try {
         const { user_email } = req.body;
