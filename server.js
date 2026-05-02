@@ -313,7 +313,7 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Web Scraping Direto - FIFA Oficial)
+// 3. ROTA DE NOTÍCIAS (Web Scraping - Modo Rede de Arrasto)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     console.log("🌐 Raspando notícias em tempo real direto da FIFA...");
@@ -321,61 +321,61 @@ app.get('/noticias', async (req, res) => {
     try {
         const fifaUrl = 'https://www.fifa.com/pt/cat/1aQDyhkYnKhkAW347zYi4Y';
         
-        // Fazemos a requisição disfarçados de navegador comum para a FIFA não bloquear
+        // Cabeçalhos reforçados para fingir muito bem que somos um navegador Chrome real no Brasil
         const response = await fetch(fifaUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
             }
         });
 
         const html = await response.text();
-        const $ = cheerio.load(html); // Carrega o HTML na engine do Cheerio
         
+        // DEBUG: Imprime o comecinho do HTML. Se aparecer palavras como "Access Denied" ou "Cloudflare", fomos pegos.
+        console.log("🔍 Raio-X do HTML recebido:", html.substring(0, 200).replace(/\n/g, ' '));
+
+        const $ = cheerio.load(html);
         const artigos = [];
 
-        // O Cheerio vai varrer todas as tags <a> (links) da página
+        // Varre TODOS os links <a> da página
         $('a').each((i, element) => {
             const link = $(element).attr('href');
             
-            // Só nos interessam links que pareçam ser de conteúdo (news, tournaments, etc)
-            if (link && (link.includes('/news/') || link.includes('/tournaments/'))) {
-                
-                // A FIFA costuma usar links relativos, então garantimos o domínio absoluto
-                const baseUrl = link.startsWith('http') ? '' : 'https://www.fifa.com';
-                const fullUrl = baseUrl + link;
-                
-                // Caça o texto que estiver dentro de um header ou parágrafo dentro desse link
-                const titulo = $(element).find('h2, h3, h4').first().text().trim() || 
-                               $(element).find('p').first().text().trim();
-                
-                // Caça a imagem (pode estar numa tag <source> do <picture> ou num <img> padrão)
-                let imgUrl = $(element).find('picture source').attr('srcset') || 
-                             $(element).find('img').attr('src') || '';
-                
-                // Se a imagem vier em formato srcset (ex: "img1.jpg 1x, img2.jpg 2x"), pegamos só o primeiro link
-                if (imgUrl && imgUrl.includes(' ')) {
-                    imgUrl = imgUrl.split(' ')[0];
-                }
+            // Ignora links vazios ou de navegação inútil
+            if (!link || link === '#' || link.startsWith('javascript')) return;
 
-                // Só colocamos no nosso JSON final se achamos Título, Imagem e se já não adicionamos antes
-                if (titulo && imgUrl && !artigos.find(a => a.title === titulo)) {
-                    artigos.push({
-                        title: titulo,
-                        url: fullUrl,
-                        urlToImage: imgUrl,
-                        source: { name: 'FIFA.com' },
-                        publishedAt: new Date().toISOString() // Data dummy, o frontend formata sozinho
-                    });
-                }
+            // Puxa QUALQUER texto de dentro do link e limpa espaços duplos
+            const titulo = $(element).text().replace(/\s+/g, ' ').trim();
+            
+            // Caça qualquer imagem (pode estar na tag <img> ou <picture><source>)
+            let imgUrl = $(element).find('img').attr('src') || $(element).find('source').attr('srcset') || '';
+            
+            // Limpa formatações estranhas de imagem (como "imagem.jpg 1x, imagem2.jpg 2x")
+            if (imgUrl && imgUrl.includes(' ')) {
+                imgUrl = imgUrl.split(' ')[0];
+            }
+
+            // CRITÉRIO DE OURO: Tem que ter uma imagem, e o texto tem que ter mais de 20 letras (pra não pegar botão de "Clique Aqui")
+            if (titulo.length > 20 && imgUrl && !artigos.find(a => a.title === titulo)) {
+                
+                const fullUrl = link.startsWith('http') ? link : `https://www.fifa.com${link}`;
+                
+                artigos.push({
+                    title: titulo,
+                    url: fullUrl,
+                    urlToImage: imgUrl,
+                    source: { name: 'FIFA.com' },
+                    publishedAt: new Date().toISOString() // Data genérica (seu front-end cuida disso)
+                });
             }
         });
 
-        console.log(`✅ Scraping concluído. Foram achadas ${artigos.length} matérias da Copa.`);
+        console.log(`✅ Scraping concluído. Foram achadas ${artigos.length} matérias possíveis.`);
 
-        // Entregamos pro seu front-end exatamente o que ele espera, e só os 5 primeiros cards
         res.json({
             status: 'ok',
-            articles: artigos.slice(0, 5)
+            articles: artigos.slice(0, 5) // Manda os 5 primeiros pro site
         });
 
     } catch (error) {
