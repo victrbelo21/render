@@ -313,16 +313,14 @@ cron.schedule('*/10 * * * *', async () => {
 });
 
 // =====================================================================
-// 3. ROTA DE NOTÍCIAS (Plano C: API Direta da FIFA)
+// 3. ROTA DE NOTÍCIAS (Plano C: API Direta da FIFA - Links Corrigidos)
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     console.log("🌐 Conectando direto na veia da API secreta da FIFA...");
 
     try {
-        // O link exato que você pescou no F12
         const fifaApiUrl = "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0";
 
-        // Fazemos a requisição passando exatamente os mesmos headers que seu Chrome passou
         const response = await fetch(fifaApiUrl, {
             headers: {
                 "accept": "application/json, text/plain, */*",
@@ -337,8 +335,6 @@ app.get('/noticias', async (req, res) => {
 
         const data = await response.json();
 
-        // A FIFA pode retornar o array de matérias dentro de data.articles, data.items ou direto.
-        // Esse código "caça" a array automaticamente.
         let listaNoticias = [];
         if (Array.isArray(data)) {
             listaNoticias = data;
@@ -347,7 +343,6 @@ app.get('/noticias', async (req, res) => {
         } else if (data.items && Array.isArray(data.items)) {
             listaNoticias = data.items;
         } else {
-            // Varre o JSON e pega a primeira lista que encontrar
             for (let key in data) {
                 if (Array.isArray(data[key])) {
                     listaNoticias = data[key];
@@ -358,29 +353,33 @@ app.get('/noticias', async (req, res) => {
 
         const artigosFormatados = [];
 
-        // Monta os cards traduzindo do padrão FIFA para o padrão do nosso Carrossel
         for (let item of listaNoticias) {
-            // Caçador de Título
+            // 1. Caçador de Título
             const titulo = item.title || item.headline || item.name || '';
             
-            // Caçador de Link (Geralmente a API manda só a parte final do link, tipo "/pt/news/...")
-            let link = item.url || item.link || item.seoPath || item.slug || '';
-            if (link && !link.startsWith('http')) {
-                link = link.startsWith('/') ? `https://www.fifa.com${link}` : `https://www.fifa.com/pt/news/${link}`;
+            // 2. Caçador de Link Mestre (Forçando a URL da Copa 2026)
+            let rawLink = item.url || item.link || item.seoPath || item.slug || '';
+            let link = '';
+            
+            if (rawLink) {
+                // Quebra a string nas barras e pega só a última parte (o slug real da matéria)
+                const partes = rawLink.split('/').filter(p => p.length > 0);
+                const slug = partes[partes.length - 1];
+                
+                // Monta a URL exata que você pediu
+                link = `https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
             }
 
-            // Caçador de Imagem em Alta Resolução
+            // 3. Caçador de Imagem em Alta Resolução
             let imageUrl = item.image?.src || item.imageUrl || item.thumbnail?.src || item.picture?.url || item.heroImage?.src || '';
 
-            // Se for link relativo, completa com o domínio
             if (imageUrl && !imageUrl.startsWith('http')) {
                 imageUrl = `https://digitalhub.fifa.com${imageUrl}`; 
             }
 
             const pubDate = item.date || item.publishedDate || item.publishedAt || new Date().toISOString();
 
-            // Só libera a notícia pro carrossel se ela tiver título e imagem
-            if (titulo && imageUrl) {
+            if (titulo && imageUrl && link) {
                 artigosFormatados.push({
                     title: titulo,
                     url: link,
@@ -391,11 +390,11 @@ app.get('/noticias', async (req, res) => {
             }
         }
 
-        console.log(`✅ Bingo! Extraímos ${artigosFormatados.length} matérias e imagens perfeitas.`);
+        console.log(`✅ Bingo! Extraímos ${artigosFormatados.length} matérias, links e imagens perfeitas.`);
 
         res.json({
             status: 'ok',
-            articles: artigosFormatados.slice(0, 5) // Envia as 5 primeiras limpas
+            articles: artigosFormatados.slice(0, 5) 
         });
 
     } catch (error) {
