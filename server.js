@@ -37,10 +37,16 @@ const TEMPO_CACHE_MINUTOS = 5;
 const ID_CONTROLE_JOGOS = 'controle_processamento_jogos';
 
 // =====================================================================
-// CACHE DE NOTÍCIAS (1x por dia)
+// CACHE DE NOTÍCIAS (1x por dia, por idioma)
 // =====================================================================
-let noticiasCache = null;
-let ultimaDataNoticias = ""; // Armazena a data no formato "YYYY-MM-DD"
+const noticiasCache = { pt: null, es: null };
+const ultimaDataNoticias = { pt: "", es: "" };
+
+// URLs das APIs secretas da FIFA por idioma
+const fifaEndpoints = {
+    pt: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0",
+    es: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/3MKHU4nyxZtXHrczk5sg1Z?locale=es&limit=16&skip=0" // URL que você encontrou!
+};
 
 // =====================================================================
 // Configuração API Football-Data.org
