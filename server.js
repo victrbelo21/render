@@ -542,7 +542,7 @@ app.post('/buscar-cartela', async (req, res) => {
         success: true, 
         palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [], 
         album: existingDoc ? existingDoc.album : null,
-        wishlist: existingDoc ? (existingDoc.wishlist || []) : [] // <-- A mágica acontece aqui
+        wishlist: existingDoc ? (existingDoc.wishlist || []) : []
     });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
@@ -564,12 +564,10 @@ app.post('/atualizar-perfil', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
 
     if (existingDoc) {
-      // Atualiza apenas se o dado foi enviado pelo site
       if (time_coracao !== undefined && time_coracao !== "") {
           existingDoc.time_coracao = time_coracao;
       }
       if (recorde_embaixadinha !== undefined) {
-          // Só atualiza se o recorde novo for maior que o antigo salvo no banco
           if (!existingDoc.recorde_embaixadinha || recorde_embaixadinha > existingDoc.recorde_embaixadinha) {
               existingDoc.recorde_embaixadinha = recorde_embaixadinha;
           }
@@ -587,9 +585,6 @@ app.post('/atualizar-perfil', async (req, res) => {
 });
 
 // =====================================================================
-// ROTA DO ÁLBUM (Abrir Pacotinho Diário)
-// =====================================================================
-// =====================================================================
 // ROTA DO ÁLBUM (Salvar Wishlist)
 // =====================================================================
 app.post('/atualizar-wishlist', async (req, res) => {
@@ -604,9 +599,7 @@ app.post('/atualizar-wishlist', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
 
     if (existingDoc) {
-      // Cria ou substitui o array de wishlist dentro do documento do usuário
       existingDoc.wishlist = wishlist;
-      
       await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
       res.status(200).json({ success: true, message: "Wishlist atualizada!" });
     } else {
@@ -630,21 +623,14 @@ app.post('/abrir-pacote', async (req, res) => {
         const userDoc = searchResponse.result.docs[0];
         if (!userDoc) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
 
-        // 1. Inicializa o álbum se o usuário ainda não tiver
         if (!userDoc.album) {
             userDoc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
         }
 
-        // 2. Trava de Segurança (Virada ao MEIO-DIA de São Paulo)
-        // Pega a hora exata em SP e cria um objeto Date
         const stringSP = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" });
         const dataSP = new Date(stringSP);
-        
-        // Subtrai 12 horas da conta. 
-        // Se for 11h da manhã do dia 15, o código enxerga como 23h do dia 14.
         dataSP.setHours(dataSP.getHours() - 12);
         
-        // Monta a string do ciclo (Ex: "2026-06-15")
         const ano = dataSP.getFullYear();
         const mes = String(dataSP.getMonth() + 1).padStart(2, '0');
         const dia = String(dataSP.getDate()).padStart(2, '0');
@@ -654,33 +640,27 @@ app.post('/abrir-pacote', async (req, res) => {
             return res.status(400).json({ success: false, error: 'O carteiro só passa ao meio-dia. Volte mais tarde!' });
         }
 
-        // 3. Motor de Probabilidade (Raridade)
         const figurinhasSorteadas = [];
         const QTD_POR_PACOTE = 5;
 
         for (let i = 0; i < QTD_POR_PACOTE; i++) {
-            const chance = Math.random() * 100; // Sorteia um número de 0 a 100
+            const chance = Math.random() * 100;
             let figurinhaSorteada;
 
             if (chance < 5) {
-                // 5% de chance: Figurinhas Lendárias (IDs 81 a 86)
                 figurinhaSorteada = Math.floor(Math.random() * (86 - 81 + 1)) + 81;
             } else if (chance < 25) {
-                // 20% de chance: Figurinhas Raras (IDs 61 a 80)
                 figurinhaSorteada = Math.floor(Math.random() * (80 - 61 + 1)) + 61;
             } else {
-                // 75% de chance: Figurinhas Comuns (IDs 1 a 60)
                 figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
             }
             figurinhasSorteadas.push(figurinhaSorteada);
         }
 
-        // 4. Separa o que é nova (vai colar) do que é repetida
         const novasParaColar = [];
         const novasRepetidas = [];
 
         figurinhasSorteadas.forEach(fig => {
-            // Verifica se a figurinha já está colada no banco OU se foi sorteada repetida dentro deste mesmo pacotinho
             if (userDoc.album.coladas.includes(fig) || novasParaColar.includes(fig)) {
                 novasRepetidas.push(fig);
                 userDoc.album.repetidas.push(fig);
@@ -690,11 +670,9 @@ app.post('/abrir-pacote', async (req, res) => {
             }
         });
 
-        // 5. Salva no banco e atualiza a data de hoje
         userDoc.album.ultimo_pacotinho = cicloAtual;
         await cloudant.putDocument({ db: DB_NAME, docId: userDoc._id, document: userDoc });
 
-        // Devolve pro site as listas separadas para fazermos as animações visuais
         res.status(200).json({ 
             success: true, 
             sorteadas: figurinhasSorteadas,
@@ -719,7 +697,6 @@ app.post('/agente-bolao', async (req, res) => {
     try {
         const agenteEndpoint = process.env.ICA_AGENT_URL; 
         
-        // --- FORMATAÇÃO PROFISSIONAL DE HISTÓRICO ---
         let promptFinal = "";
 
         if (historico && historico.length > 0) {
@@ -734,7 +711,6 @@ app.post('/agente-bolao', async (req, res) => {
         } else {
             promptFinal = mensagem;
         }
-        // --------------------------------------------
 
         const rpcPayload = {
             jsonrpc: "2.0",
@@ -768,156 +744,102 @@ app.post('/agente-bolao', async (req, res) => {
 });
 
 // =====================================================================
-// 5. ROTAS DO FEED SOCIAL (Mural da Resenha, Likes, Replies e Delete)
+// 5. ROTAS DO FÓRUM / REDE SOCIAL (MURAL DA TORCIDA)
 // =====================================================================
 
-app.post('/chat', async (req, res) => {
+app.get('/forum', async (req, res) => {
     try {
-        const { user_email, user_name, mensagem } = req.body;
-        const novoDocumento = {
-            type: "chat_message",
-            user_email, user_name, mensagem,
-            timestamp: new Date().toISOString(),
-            likes: [],  
-            replies: [] 
-        };
-        await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-        res.status(200).json({ success: true, message: "Mensagem postada!" });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao postar mensagem' });
-    }
-});
-
-app.get('/chat', async (req, res) => {
-    try {
+        // Busca todos os documentos criados sob o type "thread_forum"
         const response = await cloudant.postFind({
             db: DB_NAME,
-            selector: { type: { "$eq": "chat_message" } },
-            limit: 100 
+            selector: { type: { "$eq": "thread_forum" } },
+            limit: 200
         });
-        let mensagens = response.result.docs;
-        mensagens.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        res.status(200).json({ success: true, mensagens: mensagens });
+        
+        let threads = response.result.docs;
+        
+        // Ordenamos em memória para garantir que a discussão mais recente fique no topo
+        threads.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+        const formattedThreads = threads.map(doc => ({
+            id: doc._id,
+            subject: doc.subject,
+            tag: doc.tag,
+            author: doc.author_name,
+            author_email: doc.author_email,
+            created_at: doc.created_at,
+            messages: doc.messages || []
+        }));
+
+        res.status(200).json({ success: true, threads: formattedThreads });
     } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao carregar o mural' });
+        console.error("Erro ao buscar tópicos do fórum:", error);
+        res.status(500).json({ success: false, error: 'Erro ao carregar o fórum' });
     }
 });
 
-app.post('/chat/like', async (req, res) => {
+app.post('/forum/new-thread', async (req, res) => {
     try {
-        const { msg_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
+        const { subject, tag, author_name, author_email, first_msg } = req.body;
         
-        if (!doc.likes) doc.likes = [];
-        const index = doc.likes.indexOf(user_email);
+        if (!subject || !tag || !author_email || !first_msg) {
+            return res.status(400).json({ success: false, error: 'Dados incompletos.' });
+        }
+
+        const timestamp = new Date().toISOString();
         
-        if (index > -1) doc.likes.splice(index, 1); 
-        else doc.likes.push(user_email); 
+        const newThread = {
+            type: 'thread_forum',
+            subject: subject,
+            tag: tag,
+            author_name: author_name || author_email.split('@')[0],
+            author_email: author_email,
+            created_at: timestamp,
+            messages: [{
+                author_name: author_name || author_email.split('@')[0],
+                author_email: author_email,
+                text: first_msg,
+                timestamp: timestamp
+            }]
+        };
+
+        const response = await cloudant.postDocument({ db: DB_NAME, document: newThread });
+        res.status(200).json({ success: true, id: response.result.id });
+    } catch (error) {
+        console.error("Erro ao criar thread:", error);
+        res.status(500).json({ success: false, error: 'Erro ao criar discussão no banco' });
+    }
+});
+
+app.post('/forum/reply', async (req, res) => {
+    try {
+        const { thread_id, author_name, author_email, text } = req.body;
+        
+        if (!thread_id || !author_email || !text) {
+            return res.status(400).json({ success: false, error: 'Dados incompletos.' });
+        }
+
+        const docResponse = await cloudant.getDocument({ db: DB_NAME, docId: thread_id });
+        const doc = docResponse.result;
+
+        if (!doc.messages) doc.messages = [];
+        
+        // Adiciona a nova resposta à array de mensagens daquela thread
+        doc.messages.push({
+            author_name: author_name || author_email.split('@')[0],
+            author_email: author_email,
+            text: text,
+            timestamp: new Date().toISOString()
+        });
+
+        // Atualizamos o "created_at" da Thread para que ela volte ao topo da lista (Bump up)
+        doc.created_at = new Date().toISOString();
 
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         res.status(200).json({ success: true });
     } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao curtir' });
-    }
-});
-
-app.post('/chat/reply', async (req, res) => {
-    try {
-        const { msg_id, user_email, user_name, mensagem } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (!doc.replies) doc.replies = [];
-        
-        doc.replies.push({
-            reply_id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-            user_email, 
-            user_name, 
-            mensagem,
-            timestamp: new Date().toISOString(),
-            likes: [] 
-        });
-
-        await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-        res.status(200).json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao responder' });
-    }
-});
-
-app.post('/chat/reply/like', async (req, res) => {
-    try {
-        const { msg_id, reply_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-        const reply = doc.replies.find(r => r.reply_id === reply_id);
-        
-        if (reply) {
-            if (!reply.likes) reply.likes = [];
-            const index = reply.likes.indexOf(user_email);
-            
-            if (index > -1) reply.likes.splice(index, 1); 
-            else reply.likes.push(user_email); 
-            
-            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-        }
-        res.status(200).json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: 'Erro ao curtir resposta' });
-    }
-});
-
-app.post('/chat/delete', async (req, res) => {
-    try {
-        const { msg_id, user_email } = req.body;
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (doc.user_email === user_email) {
-            await cloudant.deleteDocument({
-                db: DB_NAME,
-                docId: doc._id,
-                rev: doc._rev
-            });
-            res.status(200).json({ success: true });
-        } else {
-            res.status(403).json({ success: false, error: 'Não autorizado' });
-        }
-    } catch (error) {
-        console.error("Erro ao apagar:", error);
-        res.status(500).json({ success: false, error: 'Erro ao apagar mensagem' });
-    }
-});
-
-app.post('/chat/reply/delete', async (req, res) => {
-    try {
-        const { msg_id, reply_id, user_email } = req.body;
-        
-        // Pega o post original
-        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: msg_id })).result;
-
-        if (!doc.replies) {
-            return res.status(404).json({ success: false, error: 'Nenhuma resposta encontrada' });
-        }
-
-        // Acha o índice da resposta específica
-        const replyIndex = doc.replies.findIndex(r => r.reply_id === reply_id);
-        
-        if (replyIndex === -1) {
-            return res.status(404).json({ success: false, error: 'Resposta não encontrada' });
-        }
-
-        // Verifica se o usuário logado é o dono da resposta
-        if (doc.replies[replyIndex].user_email === user_email) {
-            // Remove a resposta da array
-            doc.replies.splice(replyIndex, 1);
-
-            // Atualiza o documento no banco de dados
-            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
-            res.status(200).json({ success: true });
-        } else {
-            res.status(403).json({ success: false, error: 'Não autorizado' });
-        }
-    } catch (error) {
-        console.error("Erro ao apagar resposta:", error);
-        res.status(500).json({ success: false, error: 'Erro ao apagar resposta' });
+        console.error("Erro ao responder tópico:", error);
+        res.status(500).json({ success: false, error: 'Erro ao enviar resposta' });
     }
 });
 
@@ -926,5 +848,5 @@ app.post('/chat/reply/delete', async (req, res) => {
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Servidor Node.js (Bolão + Cron + Chat) rodando na porta ${port}`);
+  console.log(`Servidor Node.js (Bolão + Cron + Fórum) rodando na porta ${port}`);
 });
