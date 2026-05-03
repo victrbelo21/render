@@ -585,7 +585,7 @@ app.post('/atualizar-perfil', async (req, res) => {
 });
 
 // =====================================================================
-// ROTA DO ÁLBUM (Salvar Wishlist)
+// ROTA DO ÁLBUM (Salvar Wishlist e Abrir Pacote)
 // =====================================================================
 app.post('/atualizar-wishlist', async (req, res) => {
   try {
@@ -789,49 +789,108 @@ app.post('/forum/new-thread', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, error: 'Erro ao criar discussão no banco' }); }
 });
 
+// --- RESPONDER TÓPICO OU COMENTÁRIO (Suporta 3 níveis) ---
 app.post('/forum/reply', async (req, res) => {
     try {
-        const { thread_id, author_name, author_email, text } = req.body;
-        if (!thread_id || !author_email || !text) return res.status(400).json({ success: false, error: 'Dados incompletos.' });
+        const { thread_id, parent_msg_id, author_name, author_email, text } = req.body;
+        if (!thread_id || !author_email || !text) return res.status(400).json({ success: false });
 
-        const docResponse = await cloudant.getDocument({ db: DB_NAME, docId: thread_id });
-        const doc = docResponse.result;
-
-        if (!doc.messages) doc.messages = [];
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: thread_id })).result;
         const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         
-        doc.messages.push({
+        const novaMensagem = {
             id: msgId, author_name: author_name || author_email.split('@')[0],
-            author_email: author_email, text: text,
-            timestamp: new Date().toISOString(), likes: []
-        });
+            author_email, text, timestamp: new Date().toISOString(), likes: []
+        };
 
-        doc.created_at = new Date().toISOString(); // Sobe o tópico para o topo
+        if (parent_msg_id) {
+            // É uma resposta a um comentário específico
+            const parent = doc.messages.find(m => m.id === parent_msg_id);
+            if (parent) {
+                if (!parent.replies) parent.replies = [];
+                parent.replies.push(novaMensagem);
+            }
+        } else {
+            // É um comentário direto na discussão
+            if (!doc.messages) doc.messages = [];
+            // Adiciona a propriedade replies vazia também nos comentários principais
+            novaMensagem.replies = []; 
+            doc.messages.push(novaMensagem);
+        }
+
+        doc.created_at = new Date().toISOString(); // Bump up do tópico
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         res.status(200).json({ success: true });
-    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao enviar resposta' }); }
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// NOVA ROTA: LIKES NAS MENSAGENS DO FÓRUM
+// --- CURTIR (Suporta Comentários e Respostas Aninhadas) ---
 app.post('/forum/message/like', async (req, res) => {
     try {
-        const { thread_id, msg_id, user_email } = req.body;
-        const docResponse = await cloudant.getDocument({ db: DB_NAME, docId: thread_id });
-        const doc = docResponse.result;
+        const { thread_id, msg_id, reply_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: thread_id })).result;
 
-        const msg = doc.messages.find(m => m.id === msg_id);
-        if (msg) {
-            if (!msg.likes) msg.likes = [];
-            const index = msg.likes.indexOf(user_email);
-            if (index > -1) msg.likes.splice(index, 1); // Descurte
-            else msg.likes.push(user_email); // Curte
+        let targetMsg;
+        if (reply_id) {
+            const parent = doc.messages.find(m => m.id === msg_id);
+            if (parent && parent.replies) targetMsg = parent.replies.find(r => r.id === reply_id);
+        } else {
+            targetMsg = doc.messages.find(m => m.id === msg_id);
+        }
+
+        if (targetMsg) {
+            if (!targetMsg.likes) targetMsg.likes = [];
+            const idx = targetMsg.likes.indexOf(user_email);
+            if (idx > -1) targetMsg.likes.splice(idx, 1);
+            else targetMsg.likes.push(user_email);
             
             await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
             res.status(200).json({ success: true });
+        } else { res.status(404).json({ success: false }); }
+    } catch (error) { res.status(500).json({ success: false }); }
+});
+
+// --- EXCLUIR TÓPICO INTEIRO ---
+app.post('/forum/delete', async (req, res) => {
+    try {
+        const { thread_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: thread_id })).result;
+        
+        if (doc.author_email === user_email) {
+            await cloudant.deleteDocument({ db: DB_NAME, docId: doc._id, rev: doc._rev });
+            res.status(200).json({ success: true });
+        } else { res.status(403).json({ success: false }); }
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+// --- EXCLUIR COMENTÁRIO OU RESPOSTA ---
+app.post('/forum/message/delete', async (req, res) => {
+    try {
+        const { thread_id, msg_id, reply_id, user_email } = req.body;
+        const doc = (await cloudant.getDocument({ db: DB_NAME, docId: thread_id })).result;
+        
+        if (reply_id) {
+            const msg = doc.messages.find(m => m.id === msg_id);
+            if (msg && msg.replies) {
+                const repIndex = msg.replies.findIndex(r => r.id === reply_id);
+                if (repIndex > -1 && msg.replies[repIndex].author_email === user_email) {
+                    msg.replies.splice(repIndex, 1);
+                    await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+                    return res.status(200).json({ success: true });
+                }
+            }
         } else {
-            res.status(404).json({ success: false, error: 'Msg não encontrada' });
+            const msgIndex = doc.messages.findIndex(m => m.id === msg_id);
+            // Importante: garante que não está apagando o index 0 se não quiser que quebre a thread, 
+            // mas o front-end manda pra /forum/delete se for a msg principal.
+            if (msgIndex > -1 && doc.messages[msgIndex].author_email === user_email) {
+                doc.messages.splice(msgIndex, 1);
+                await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+                return res.status(200).json({ success: true });
+            }
         }
-    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao curtir' }); }
+        res.status(403).json({ success: false, error: 'Não autorizado' });
+    } catch(e) { res.status(500).json({ success: false }); }
 });
 
 // =====================================================================
