@@ -749,98 +749,89 @@ app.post('/agente-bolao', async (req, res) => {
 
 app.get('/forum', async (req, res) => {
     try {
-        // Busca todos os documentos criados sob o type "thread_forum"
         const response = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: { "$eq": "thread_forum" } },
-            limit: 200
+            db: DB_NAME, selector: { type: { "$eq": "thread_forum" } }, limit: 200
         });
-        
         let threads = response.result.docs;
-        
-        // Ordenamos em memória para garantir que a discussão mais recente fique no topo
         threads.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
         const formattedThreads = threads.map(doc => ({
-            id: doc._id,
-            subject: doc.subject,
-            tag: doc.tag,
-            author: doc.author_name,
-            author_email: doc.author_email,
-            created_at: doc.created_at,
-            messages: doc.messages || []
+            id: doc._id, subject: doc.subject, tag: doc.tag,
+            author: doc.author_name, author_email: doc.author_email,
+            created_at: doc.created_at, messages: doc.messages || []
         }));
 
         res.status(200).json({ success: true, threads: formattedThreads });
-    } catch (error) {
-        console.error("Erro ao buscar tópicos do fórum:", error);
-        res.status(500).json({ success: false, error: 'Erro ao carregar o fórum' });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao carregar o fórum' }); }
 });
 
 app.post('/forum/new-thread', async (req, res) => {
     try {
         const { subject, tag, author_name, author_email, first_msg } = req.body;
-        
-        if (!subject || !tag || !author_email || !first_msg) {
-            return res.status(400).json({ success: false, error: 'Dados incompletos.' });
-        }
+        if (!subject || !tag || !author_email || !first_msg) return res.status(400).json({ success: false, error: 'Dados incompletos.' });
 
         const timestamp = new Date().toISOString();
+        const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         
         const newThread = {
-            type: 'thread_forum',
-            subject: subject,
-            tag: tag,
+            type: 'thread_forum', subject: subject, tag: tag,
             author_name: author_name || author_email.split('@')[0],
-            author_email: author_email,
-            created_at: timestamp,
+            author_email: author_email, created_at: timestamp,
             messages: [{
-                author_name: author_name || author_email.split('@')[0],
-                author_email: author_email,
-                text: first_msg,
-                timestamp: timestamp
+                id: msgId, author_name: author_name || author_email.split('@')[0],
+                author_email: author_email, text: first_msg,
+                timestamp: timestamp, likes: []
             }]
         };
 
         const response = await cloudant.postDocument({ db: DB_NAME, document: newThread });
         res.status(200).json({ success: true, id: response.result.id });
-    } catch (error) {
-        console.error("Erro ao criar thread:", error);
-        res.status(500).json({ success: false, error: 'Erro ao criar discussão no banco' });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao criar discussão no banco' }); }
 });
 
 app.post('/forum/reply', async (req, res) => {
     try {
         const { thread_id, author_name, author_email, text } = req.body;
-        
-        if (!thread_id || !author_email || !text) {
-            return res.status(400).json({ success: false, error: 'Dados incompletos.' });
-        }
+        if (!thread_id || !author_email || !text) return res.status(400).json({ success: false, error: 'Dados incompletos.' });
 
         const docResponse = await cloudant.getDocument({ db: DB_NAME, docId: thread_id });
         const doc = docResponse.result;
 
         if (!doc.messages) doc.messages = [];
+        const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         
-        // Adiciona a nova resposta à array de mensagens daquela thread
         doc.messages.push({
-            author_name: author_name || author_email.split('@')[0],
-            author_email: author_email,
-            text: text,
-            timestamp: new Date().toISOString()
+            id: msgId, author_name: author_name || author_email.split('@')[0],
+            author_email: author_email, text: text,
+            timestamp: new Date().toISOString(), likes: []
         });
 
-        // Atualizamos o "created_at" da Thread para que ela volte ao topo da lista (Bump up)
-        doc.created_at = new Date().toISOString();
-
+        doc.created_at = new Date().toISOString(); // Sobe o tópico para o topo
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         res.status(200).json({ success: true });
-    } catch (error) {
-        console.error("Erro ao responder tópico:", error);
-        res.status(500).json({ success: false, error: 'Erro ao enviar resposta' });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao enviar resposta' }); }
+});
+
+// NOVA ROTA: LIKES NAS MENSAGENS DO FÓRUM
+app.post('/forum/message/like', async (req, res) => {
+    try {
+        const { thread_id, msg_id, user_email } = req.body;
+        const docResponse = await cloudant.getDocument({ db: DB_NAME, docId: thread_id });
+        const doc = docResponse.result;
+
+        const msg = doc.messages.find(m => m.id === msg_id);
+        if (msg) {
+            if (!msg.likes) msg.likes = [];
+            const index = msg.likes.indexOf(user_email);
+            if (index > -1) msg.likes.splice(index, 1); // Descurte
+            else msg.likes.push(user_email); // Curte
+            
+            await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
+            res.status(200).json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Msg não encontrada' });
+        }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao curtir' }); }
 });
 
 // =====================================================================
