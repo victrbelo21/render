@@ -174,51 +174,39 @@ cron.schedule('*/10 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
     
     try {
-        // 1. Busca o documento de controle no Cloudant
         let controleDoc;
         try {
             controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
-            // Garante que o array de jogos manuais existe caso seja um doc antigo
             if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
         } catch (e) {
-            // Se o documento não existir ainda, ele cria um novo para começar o histórico
             controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], type: "config" };
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
         }
 
-        // 2. Busca jogos finalizados na API Oficial
         const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
         
         const data = await response.json();
-        
         if (data.errorCode) {
             console.log('❌ Erro na API:', data.message);
             return;
         }
         
         const jogosDaAPI = data.matches || [];
-        
-        // 3. Filtra apenas os jogos da API que ainda não foram processados
         const jogosOficiais = jogosDaAPI.filter(jogo => !controleDoc.jogos_processados.includes(jogo.id));
 
-        // 4. INJEÇÃO DOS JOGOS MANUAIS DO CLOUDANT (Kill Switch / Override)
+        // MÁGICA 1: Os jogos manuais SEMPRE entram na fila de avaliação (nunca são bloqueados)
         if (controleDoc.jogos_manuais && controleDoc.jogos_manuais.length > 0) {
             controleDoc.jogos_manuais.forEach(jm => {
-                // Cria um ID único para esse jogo manual não ficar em loop infinito
-                const manualId = `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}`;
-                
-                if (!controleDoc.jogos_processados.includes(manualId)) {
-                    jogosOficiais.push({
-                        id: manualId,
-                        isManual: true, // Flag para pularmos a trava de data abaixo
-                        homeTeam: { name: jm.time_1 },
-                        awayTeam: { name: jm.time_2 },
-                        score: { fullTime: { home: jm.placar_1, away: jm.placar_2 } },
-                        utcDate: new Date().toISOString() 
-                    });
-                }
+                jogosOficiais.push({
+                    id: `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}`,
+                    isManual: true, // Avisa pro sistema que é manual e não deve ser bloqueado depois
+                    homeTeam: { name: jm.time_1 },
+                    awayTeam: { name: jm.time_2 },
+                    score: { fullTime: { home: jm.placar_1, away: jm.placar_2 } },
+                    utcDate: new Date().toISOString() 
+                });
             });
         }
 
@@ -227,7 +215,7 @@ cron.schedule('*/10 * * * *', async () => {
             return;
         }
 
-        console.log(`🎯 Encontrados ${jogosOficiais.length} novos jogos para processar (API + Manuais)!`);
+        console.log(`🎯 Avaliando ${jogosOficiais.length} jogos (API + Manuais)...`);
         
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
@@ -257,13 +245,9 @@ cron.schedule('*/10 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
-                    // Trava de Data: se for jogo manual, ignora a data e força a validação
                     const bateuData = dataPalpite ? (dataPalpite === dataAPI || j.isManual) : true;
-
-                    // Lógica Bi-direcional (Permite inverter Casa/Fora - Independente de idioma)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
-
                     const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
                                            (home.includes(time2Ingles) || time2Ingles.includes(home));
 
@@ -284,7 +268,6 @@ cron.schedule('*/10 * * * *', async () => {
                 if (jogoOficial) {
                     const palpite1 = palpite.placar_1;
                     const palpite2 = palpite.placar_2;
-
                     let pontosGanhos = 0;
 
                     if (palpite1 === placarReal1 && palpite2 === placarReal2) {
@@ -295,18 +278,14 @@ cron.schedule('*/10 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    // Verifica se os pontos mudaram OU se o placar oficial ainda não estava salvo
-                    if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1) {
+                    // MÁGICA 2: Ele compara com o que já tá salvo. Se você mudou o manual no banco, ele detecta!
+                    if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
                         palpite.pontos_obtidos = pontosGanhos;
-                        
-                        // SALVANDO O PLACAR OFICIAL NO BANCO PARA O FRONT-END
                         palpite.placar_oficial_1 = placarReal1;
                         palpite.placar_oficial_2 = placarReal2;
-                        
                         houveMudancaInterna = true;
                     }
                 }
-                
                 pontosTotalCalculado += (palpite.pontos_obtidos || 0);
             });
 
@@ -316,23 +295,24 @@ cron.schedule('*/10 * * * *', async () => {
             }
         }
 
-        // =====================================================================
-        // O ENVIO EM MASSA (Bulk Docs) E ATUALIZAÇÃO DO CONTROLE
-        // =====================================================================
-        if (documentosParaAtualizar.length > 0) {
-            jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
-            documentosParaAtualizar.push(controleDoc);
+        let controleModificado = false;
+        jogosOficiais.forEach(jogo => {
+            // MÁGICA 3: Só adiciona na lista de processados bloqueados se NÃO for um jogo manual!
+            if (!jogo.isManual && !controleDoc.jogos_processados.includes(jogo.id)) {
+                controleDoc.jogos_processados.push(jogo.id);
+                controleModificado = true;
+            }
+        });
 
-            await cloudant.postBulkDocs({
-                db: DB_NAME,
-                bulkDocs: { docs: documentosParaAtualizar }
-            });
+        if (documentosParaAtualizar.length > 0) {
+            if (controleModificado) documentosParaAtualizar.push(controleDoc);
+            await cloudant.postBulkDocs({ db: DB_NAME, bulkDocs: { docs: documentosParaAtualizar } });
             console.log(`📦 Atualização em massa concluída! ${documentosParaAtualizar.length} documentos salvos.`);
-            
-        } else if (jogosOficiais.length > 0) {
-            jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
+        } else if (controleModificado) {
             await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
-            console.log('✅ Jogos registrados no controle, mas nenhuma cartela precisou de atualização.');
+            console.log('✅ Jogos da API registrados no controle. Nenhuma cartela sofreu alteração.');
+        } else {
+            console.log('✅ Tudo certo. Nenhuma alteração nova identificada nos manuais.');
         }
         
     } catch (error) {
