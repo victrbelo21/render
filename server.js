@@ -263,13 +263,24 @@ cron.schedule('*/10 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
+                    // A NOVA TRAVA DE DATA BLINDADA (Com tolerância de ± 24 horas)
                     let bateuData = false;
+                    const dataAPI = formatarDataISO(j.utcDate);
+
                     if (!dataPalpite) {
-                        bateuData = true;
+                        bateuData = true; // Passa se a cartela estiver sem data
                     } else if (j.isManual && !j.strictDate) {
-                        bateuData = true;
-                    } else {
-                        bateuData = (dataPalpite === dataAPI);
+                        bateuData = true; // Passa se o jogo manual não tiver data definida
+                    } else if (dataAPI) {
+                        // Força as duas datas para o meio-dia UTC, isolando o problema de fuso
+                        const dPalpite = new Date(dataPalpite + "T12:00:00Z");
+                        const dAPI = new Date(dataAPI + "T12:00:00Z");
+                        
+                        // Calcula a diferença absoluta em dias
+                        const diffEmDias = Math.abs(dPalpite - dAPI) / (1000 * 60 * 60 * 24);
+                        
+                        // Se for no mesmo dia (0) ou a diferença for de 1 dia, deu Match!
+                        bateuData = (diffEmDias <= 1); 
                     }
 
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
