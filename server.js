@@ -178,13 +178,15 @@ cron.schedule('*/10 * * * *', async () => {
         let controleDoc;
         try {
             controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
+            // Garante que o array de jogos manuais existe caso seja um doc antigo
+            if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
         } catch (e) {
             // Se o documento não existir ainda, ele cria um novo para começar o histórico
-            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], type: "config" };
+            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], type: "config" };
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
         }
 
-        // 2. Busca jogos finalizados na API
+        // 2. Busca jogos finalizados na API Oficial
         const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
@@ -198,15 +200,34 @@ cron.schedule('*/10 * * * *', async () => {
         
         const jogosDaAPI = data.matches || [];
         
-        // Filtra apenas os jogos que a API diz que acabaram mas que NÃO estão na nossa lista do Cloudant
+        // 3. Filtra apenas os jogos da API que ainda não foram processados
         const jogosOficiais = jogosDaAPI.filter(jogo => !controleDoc.jogos_processados.includes(jogo.id));
+
+        // 4. INJEÇÃO DOS JOGOS MANUAIS DO CLOUDANT (Kill Switch / Override)
+        if (controleDoc.jogos_manuais && controleDoc.jogos_manuais.length > 0) {
+            controleDoc.jogos_manuais.forEach(jm => {
+                // Cria um ID único para esse jogo manual não ficar em loop infinito
+                const manualId = `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}`;
+                
+                if (!controleDoc.jogos_processados.includes(manualId)) {
+                    jogosOficiais.push({
+                        id: manualId,
+                        isManual: true, // Flag para pularmos a trava de data abaixo
+                        homeTeam: { name: jm.time_1 },
+                        awayTeam: { name: jm.time_2 },
+                        score: { fullTime: { home: jm.placar_1, away: jm.placar_2 } },
+                        utcDate: new Date().toISOString() 
+                    });
+                }
+            });
+        }
 
         if (jogosOficiais.length === 0) {
             console.log('✅ Tudo atualizado. Nenhum jogo novo para pontuar.');
             return;
         }
 
-        console.log(`🎯 Encontrados ${jogosOficiais.length} novos jogos para processar!`);
+        console.log(`🎯 Encontrados ${jogosOficiais.length} novos jogos para processar (API + Manuais)!`);
         
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
@@ -236,10 +257,10 @@ cron.schedule('*/10 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
-                    // Trava de Data
-                    const bateuData = dataPalpite ? (dataPalpite === dataAPI) : true;
+                    // Trava de Data: se for jogo manual, ignora a data e força a validação
+                    const bateuData = dataPalpite ? (dataPalpite === dataAPI || j.isManual) : true;
 
-                    // Lógica Bi-direcional (Permite inverter Casa/Fora)
+                    // Lógica Bi-direcional (Permite inverter Casa/Fora - Independente de idioma)
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
 
@@ -274,8 +295,14 @@ cron.schedule('*/10 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    if (palpite.pontos_obtidos !== pontosGanhos) {
+                    // Verifica se os pontos mudaram OU se o placar oficial ainda não estava salvo
+                    if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1) {
                         palpite.pontos_obtidos = pontosGanhos;
+                        
+                        // SALVANDO O PLACAR OFICIAL NO BANCO PARA O FRONT-END
+                        palpite.placar_oficial_1 = placarReal1;
+                        palpite.placar_oficial_2 = placarReal2;
+                        
                         houveMudancaInterna = true;
                     }
                 }
@@ -293,21 +320,16 @@ cron.schedule('*/10 * * * *', async () => {
         // O ENVIO EM MASSA (Bulk Docs) E ATUALIZAÇÃO DO CONTROLE
         // =====================================================================
         if (documentosParaAtualizar.length > 0) {
-            // Adiciona os IDs dos jogos novos na lista de processados
             jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
-            
-            // Coloca o documento de controle dentro da mesma caixa de envio das cartelas
             documentosParaAtualizar.push(controleDoc);
 
-            // Bate na porta do Cloudant UMA única vez com tudo
             await cloudant.postBulkDocs({
                 db: DB_NAME,
                 bulkDocs: { docs: documentosParaAtualizar }
             });
-            console.log(`📦 Atualização em massa concluída! ${documentosParaAtualizar.length} documentos salvos (incluindo controle).`);
+            console.log(`📦 Atualização em massa concluída! ${documentosParaAtualizar.length} documentos salvos.`);
             
         } else if (jogosOficiais.length > 0) {
-            // Se jogos terminaram, mas nenhum usuário pontuou ou teve mudança na cartela
             jogosOficiais.forEach(jogo => controleDoc.jogos_processados.push(jogo.id));
             await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
             console.log('✅ Jogos registrados no controle, mas nenhuma cartela precisou de atualização.');
