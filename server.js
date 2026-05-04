@@ -196,16 +196,21 @@ cron.schedule('*/10 * * * *', async () => {
         const jogosDaAPI = data.matches || [];
         const jogosOficiais = jogosDaAPI.filter(jogo => !controleDoc.jogos_processados.includes(jogo.id));
 
-        // MÁGICA 1: Os jogos manuais SEMPRE entram na fila de avaliação (nunca são bloqueados)
+        // INJEÇÃO DOS JOGOS MANUAIS
         if (controleDoc.jogos_manuais && controleDoc.jogos_manuais.length > 0) {
             controleDoc.jogos_manuais.forEach(jm => {
+                // Se o jogo manual tiver data, adiciona ao ID para evitar que um 'rematch' seja bloqueado no futuro
+                const sufixoData = jm.data_jogo ? `_${jm.data_jogo}` : '';
+                const manualId = `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}${sufixoData}`;
+                
                 jogosOficiais.push({
-                    id: `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}`,
-                    isManual: true, // Avisa pro sistema que é manual e não deve ser bloqueado depois
+                    id: manualId,
+                    isManual: true,
+                    strictDate: !!jm.data_jogo, // Nova flag: se tem data, vai ser exigente!
                     homeTeam: { name: jm.time_1 },
                     awayTeam: { name: jm.time_2 },
                     score: { fullTime: { home: jm.placar_1, away: jm.placar_2 } },
-                    utcDate: new Date().toISOString() 
+                    utcDate: jm.data_jogo || new Date().toISOString() 
                 });
             });
         }
@@ -235,6 +240,7 @@ cron.schedule('*/10 * * * *', async () => {
             doc.palpites_jogos.forEach(palpite => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
+                // Pega a data da cartela e já transforma em ISO (2026-06-11)
                 const dataPalpite = formatarDataISO(palpite.data_jogo);
 
                 let placarReal1 = null;
@@ -245,7 +251,16 @@ cron.schedule('*/10 * * * *', async () => {
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
-                    const bateuData = dataPalpite ? (dataPalpite === dataAPI || j.isManual) : true;
+                    // A NOVA TRAVA DE DATA BLINDADA
+                    let bateuData = false;
+                    if (!dataPalpite) {
+                        bateuData = true; // Se por algum motivo bizarro a cartela tá sem data, passa.
+                    } else if (j.isManual && !j.strictDate) {
+                        bateuData = true; // Legado: se você lançar manual sem a key "data_jogo", ele ignora o dia.
+                    } else {
+                        bateuData = (dataPalpite === dataAPI); // O Match perfeito
+                    }
+
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
                     const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
@@ -278,7 +293,6 @@ cron.schedule('*/10 * * * *', async () => {
                         if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
                     }
 
-                    // MÁGICA 2: Ele compara com o que já tá salvo. Se você mudou o manual no banco, ele detecta!
                     if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
                         palpite.pontos_obtidos = pontosGanhos;
                         palpite.placar_oficial_1 = placarReal1;
@@ -297,7 +311,6 @@ cron.schedule('*/10 * * * *', async () => {
 
         let controleModificado = false;
         jogosOficiais.forEach(jogo => {
-            // MÁGICA 3: Só adiciona na lista de processados bloqueados se NÃO for um jogo manual!
             if (!jogo.isManual && !controleDoc.jogos_processados.includes(jogo.id)) {
                 controleDoc.jogos_processados.push(jogo.id);
                 controleModificado = true;
