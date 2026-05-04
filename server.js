@@ -484,9 +484,8 @@ app.post('/salvar-lote', async (req, res) => {
     // =================================================================
     // 🛡️ MURALHA DE SEGURANÇA (ANTI-FRAUDE DE HORÁRIO COM MERGE)
     // =================================================================
-    const agoraServidor = new Date(); // Relógio oficial do servidor (Inhackeável)
+    const agoraServidor = new Date(); 
     
-    // Se o usuário já tem palpites no banco, puxamos eles para não deletar os jogos já travados
     const palpitesFinais = existingDoc && existingDoc.palpites_jogos ? [...existingDoc.palpites_jogos] : [];
     let modificacoesValidas = 0;
 
@@ -494,20 +493,15 @@ app.post('/salvar-lote', async (req, res) => {
         const matchHora = palpite_recebido.horario.match(/(\d{2}):(\d{2})/);
         
         if (palpite_recebido.data_jogo && matchHora) {
-            // Monta a data forçando o fuso de Brasília (UTC-03:00)
             const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00-03:00`;
             const dataOficialJogo = new Date(dataJogoStr);
-            
-            // Calcula a diferença em horas entre o Servidor e o Jogo
             const difHoras = (dataOficialJogo - agoraServidor) / (1000 * 60 * 60);
 
-            // Procura se esse palpite já existia no banco
             const indexExistente = palpitesFinais.findIndex(p => 
                 p.time_1 === palpite_recebido.time_1 && p.time_2 === palpite_recebido.time_2
             );
 
             if (difHoras > 24) {
-                // TUDO CERTO! Faltam mais de 24h pro jogo. Atualiza ou insere o palpite.
                 if (indexExistente > -1) {
                     palpitesFinais[indexExistente] = palpite_recebido;
                 } else {
@@ -515,9 +509,6 @@ app.post('/salvar-lote', async (req, res) => {
                 }
                 modificacoesValidas++;
             } else {
-                // FRAUDE DETECTADA (Ou usuário com relógio desconfigurado)
-                // Se tentou mandar fora do prazo, nós ignoramos essa alteração.
-                // O palpite antigo (se existir) será mantido intacto no array palpitesFinais.
                 console.log(`🚨 BLOQUEADO: ${user_email} tentou enviar/alterar o jogo ${palpite_recebido.time_1} x ${palpite_recebido.time_2} com menos de 24h de antecedência.`);
             }
         }
@@ -526,10 +517,6 @@ app.post('/salvar-lote', async (req, res) => {
     if (modificacoesValidas === 0 && palpites.length > 0) {
         return res.status(400).json({ success: false, error: 'Prazo encerrado para os palpites enviados. Alterações recusadas pelo servidor.' });
     }
-
-    // =================================================================
-    // SALVANDO NO CLOUDANT
-    // =================================================================
 
     if (existingDoc) {
       existingDoc.palpites_jogos = palpitesFinais;
@@ -554,6 +541,97 @@ app.post('/salvar-lote', async (req, res) => {
   } catch (error) {
     console.error("Erro /salvar-lote:", error);
     res.status(500).json({ success: false, error: 'Erro ao processar lote' });
+  }
+});
+
+app.post('/salvar-final', async (req, res) => {
+  try {
+    const { user_email, user_name, vencedor_campeonato, placar_final } = req.body;
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+    const dadosDaFinal = { vencedor_campeonato, placar_final };
+
+    if (existingDoc) {
+      existingDoc.palpite_final = dadosDaFinal;
+      existingDoc.timestamp = new Date().toISOString();
+      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
+      res.status(200).json({ success: true, message: "Final salva" });
+    } else {
+      const novoDocumento = {
+        type: "cartela_usuario",
+        user_email, user_name: user_name || user_email.split('@')[0],
+        palpites_jogos: [],
+        pontos_acumulados: 0,
+        palpite_final: dadosDaFinal,
+        timestamp: new Date().toISOString()
+      };
+      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
+      res.status(200).json({ success: true, message: "Cartela criada com a final" });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro palpite final' });
+  }
+});
+
+app.get('/ranking', async (req, res) => {
+  try {
+    const agora = Date.now();
+    const tempoPassado = (agora - ultimaAtualizacaoCache) / 1000 / 60;
+    
+    if (rankingCache && tempoPassado < TEMPO_CACHE_MINUTOS) {
+        console.log("⚡ Servindo ranking direto do cache da memória!");
+        return res.status(200).json({ success: true, ranking: rankingCache });
+    }
+
+    console.log("🐌 Buscando ranking direto no Cloudant...");
+    const response = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" } },
+      limit: 2000
+    });
+
+    const rankingArray = response.result.docs.map(doc => ({
+        email: doc.user_email,
+        nome: doc.user_name,
+        pontos: doc.pontos_acumulados || 0,
+        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
+        time_coracao: doc.time_coracao || '', 
+        recorde_embaixadinha: doc.recorde_embaixadinha || 0 
+    }));
+
+    rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
+    
+    rankingCache = rankingArray;
+    ultimaAtualizacaoCache = Date.now();
+
+    res.status(200).json({ success: true, ranking: rankingArray });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
+  }
+});
+
+app.post('/buscar-cartela', async (req, res) => {
+  try {
+    const { user_email } = req.body;
+    const searchResponse = await cloudant.postFind({
+      db: DB_NAME,
+      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    });
+
+    const existingDoc = searchResponse.result.docs[0];
+    
+    res.status(200).json({ 
+        success: true, 
+        palpites: existingDoc ? (existingDoc.palpites_jogos || []) : [], 
+        album: existingDoc ? existingDoc.album : null,
+        wishlist: existingDoc ? (existingDoc.wishlist || []) : []
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Erro ao buscar cartela' });
   }
 });
 
