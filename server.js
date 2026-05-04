@@ -261,7 +261,6 @@ cron.schedule('*/10 * * * *', async () => {
                 const jogoFinalizado = todosJogosFinalizados.find(j => {
                     const home = formatarTexto(j.homeTeam.name);
                     const away = formatarTexto(j.awayTeam.name);
-                    const dataAPI = formatarDataISO(j.utcDate);
 
                     // A NOVA TRAVA DE DATA BLINDADA (Com tolerância de ± 24 horas)
                     let bateuData = false;
