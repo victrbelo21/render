@@ -179,7 +179,8 @@ cron.schedule('*/10 * * * *', async () => {
             controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
             if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
         } catch (e) {
-            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], type: "config" };
+            // Cria o controle com a propriedade "ultimo_estado_manuais" para gerenciar rollbacks
+            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], ultimo_estado_manuais: "[]", type: "config" };
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
         }
 
@@ -194,19 +195,27 @@ cron.schedule('*/10 * * * *', async () => {
         }
         
         const jogosDaAPI = data.matches || [];
-        const jogosOficiais = jogosDaAPI.filter(jogo => !controleDoc.jogos_processados.includes(jogo.id));
+        // Lista Mestra com TODOS os jogos finalizados do mundo real
+        const todosJogosFinalizados = [...jogosDaAPI];
 
-        // INJEÇÃO DOS JOGOS MANUAIS
+        // MÁGICA DO ROLLBACK: Verifica se você deletou ou alterou um jogo manual no Cloudant
+        const estadoAtualManuais = JSON.stringify(controleDoc.jogos_manuais);
+        let teveAlteracaoManual = false;
+        if (controleDoc.ultimo_estado_manuais !== estadoAtualManuais) {
+            teveAlteracaoManual = true;
+            controleDoc.ultimo_estado_manuais = estadoAtualManuais; // Tira a nova foto
+        }
+
+        // INJEÇÃO DOS JOGOS MANUAIS NA LISTA MESTRA
         if (controleDoc.jogos_manuais && controleDoc.jogos_manuais.length > 0) {
             controleDoc.jogos_manuais.forEach(jm => {
-                // Se o jogo manual tiver data, adiciona ao ID para evitar que um 'rematch' seja bloqueado no futuro
                 const sufixoData = jm.data_jogo ? `_${jm.data_jogo}` : '';
                 const manualId = `manual_${formatarTexto(jm.time_1)}_${formatarTexto(jm.time_2)}${sufixoData}`;
                 
-                jogosOficiais.push({
+                todosJogosFinalizados.push({
                     id: manualId,
                     isManual: true,
-                    strictDate: !!jm.data_jogo, // Nova flag: se tem data, vai ser exigente!
+                    strictDate: !!jm.data_jogo,
                     homeTeam: { name: jm.time_1 },
                     awayTeam: { name: jm.time_2 },
                     score: { fullTime: { home: jm.placar_1, away: jm.placar_2 } },
@@ -215,12 +224,18 @@ cron.schedule('*/10 * * * *', async () => {
             });
         }
 
-        if (jogosOficiais.length === 0) {
-            console.log('✅ Tudo atualizado. Nenhum jogo novo para pontuar.');
+        // Filtra quais precisam ser processados *agora* (Novos da API ou qualquer Manual modificado)
+        const jogosOficiais = todosJogosFinalizados.filter(jogo => 
+            jogo.isManual || !controleDoc.jogos_processados.includes(jogo.id)
+        );
+
+        // Se não tem jogo novo da API, E você não mexeu/apagou nenhum manual, aborta! Economiza CPU.
+        if (jogosOficiais.length === 0 && !teveAlteracaoManual) {
+            console.log('✅ Tudo atualizado. Nenhum jogo novo e nenhum rollback detectado.');
             return;
         }
 
-        console.log(`🎯 Avaliando ${jogosOficiais.length} jogos (API + Manuais)...`);
+        console.log(`🎯 Varrendo cartelas (Alteração manual ou novos jogos detectados)...`);
         
         const userDocs = await cloudant.postFind({
             db: DB_NAME,
@@ -240,25 +255,21 @@ cron.schedule('*/10 * * * *', async () => {
             doc.palpites_jogos.forEach(palpite => {
                 const time1Ingles = traduzirTime(palpite.time_1);
                 const time2Ingles = traduzirTime(palpite.time_2);
-                // Pega a data da cartela e já transforma em ISO (2026-06-11)
                 const dataPalpite = formatarDataISO(palpite.data_jogo);
 
-                let placarReal1 = null;
-                let placarReal2 = null;
-
-                const jogoOficial = jogosOficiais.find(j => {
+                // 1. Procura na lista Mestra (API + Manuais) pra ver se o jogo ESTÁ finalizado
+                const jogoFinalizado = todosJogosFinalizados.find(j => {
                     const home = formatarTexto(j.homeTeam.name);
                     const away = formatarTexto(j.awayTeam.name);
                     const dataAPI = formatarDataISO(j.utcDate);
 
-                    // A NOVA TRAVA DE DATA BLINDADA
                     let bateuData = false;
                     if (!dataPalpite) {
-                        bateuData = true; // Se por algum motivo bizarro a cartela tá sem data, passa.
+                        bateuData = true;
                     } else if (j.isManual && !j.strictDate) {
-                        bateuData = true; // Legado: se você lançar manual sem a key "data_jogo", ele ignora o dia.
+                        bateuData = true;
                     } else {
-                        bateuData = (dataPalpite === dataAPI); // O Match perfeito
+                        bateuData = (dataPalpite === dataAPI);
                     }
 
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
@@ -266,40 +277,51 @@ cron.schedule('*/10 * * * *', async () => {
                     const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
                                            (home.includes(time2Ingles) || time2Ingles.includes(home));
 
-                    if (bateuData) {
-                        if (ordemExata) {
-                            placarReal1 = j.score.fullTime.home;
-                            placarReal2 = j.score.fullTime.away;
-                            return true;
-                        } else if (ordemInvertida) {
-                            placarReal1 = j.score.fullTime.away;
-                            placarReal2 = j.score.fullTime.home;
-                            return true;
-                        }
-                    }
-                    return false;
+                    return bateuData && (ordemExata || ordemInvertida);
                 });
 
-                if (jogoOficial) {
-                    const palpite1 = palpite.placar_1;
-                    const palpite2 = palpite.placar_2;
-                    let pontosGanhos = 0;
+                if (jogoFinalizado) {
+                    // O Jogo FOI finalizado!
+                    const home = formatarTexto(jogoFinalizado.homeTeam.name);
+                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
+                    
+                    let placarReal1 = ordemExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
+                    let placarReal2 = ordemExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
 
-                    if (palpite1 === placarReal1 && palpite2 === placarReal2) {
-                        pontosGanhos = 5; 
-                    } else {
-                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
-                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                        if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                    // Ele só atualiza os pontos se for um jogo novo da API ou um Manual (que está nos jogosOficiais)
+                    const precisaCalcular = jogosOficiais.some(jo => jo.id === jogoFinalizado.id);
+                    
+                    if (precisaCalcular) {
+                        const palpite1 = palpite.placar_1;
+                        const palpite2 = palpite.placar_2;
+                        let pontosGanhos = 0;
+
+                        if (palpite1 === placarReal1 && palpite2 === placarReal2) {
+                            pontosGanhos = 5; 
+                        } else {
+                            const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
+                            const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+                            if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                        }
+
+                        if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
+                            palpite.pontos_obtidos = pontosGanhos;
+                            palpite.placar_oficial_1 = placarReal1;
+                            palpite.placar_oficial_2 = placarReal2;
+                            houveMudancaInterna = true;
+                        }
                     }
-
-                    if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
-                        palpite.pontos_obtidos = pontosGanhos;
-                        palpite.placar_oficial_1 = placarReal1;
-                        palpite.placar_oficial_2 = placarReal2;
+                } else {
+                    // O Jogo NÃO ESTÁ MAIS finalizado (Foi removido do controle no Cloudant)
+                    // Se o usuário tinha pontos/placar oficial anotados aqui, nós deletamos! (Rollback)
+                    if (palpite.placar_oficial_1 !== undefined) {
+                        delete palpite.placar_oficial_1;
+                        delete palpite.placar_oficial_2;
+                        palpite.pontos_obtidos = 0; // Remove os pontos também
                         houveMudancaInterna = true;
                     }
                 }
+                
                 pontosTotalCalculado += (palpite.pontos_obtidos || 0);
             });
 
@@ -309,8 +331,8 @@ cron.schedule('*/10 * * * *', async () => {
             }
         }
 
-        let controleModificado = false;
-        jogosOficiais.forEach(jogo => {
+        let controleModificado = teveAlteracaoManual;
+        todosJogosFinalizados.forEach(jogo => {
             if (!jogo.isManual && !controleDoc.jogos_processados.includes(jogo.id)) {
                 controleDoc.jogos_processados.push(jogo.id);
                 controleModificado = true;
@@ -320,12 +342,12 @@ cron.schedule('*/10 * * * *', async () => {
         if (documentosParaAtualizar.length > 0) {
             if (controleModificado) documentosParaAtualizar.push(controleDoc);
             await cloudant.postBulkDocs({ db: DB_NAME, bulkDocs: { docs: documentosParaAtualizar } });
-            console.log(`📦 Atualização em massa concluída! ${documentosParaAtualizar.length} documentos salvos.`);
+            console.log(`📦 Atualização/Rollback concluído! ${documentosParaAtualizar.length} documentos salvos.`);
         } else if (controleModificado) {
             await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
-            console.log('✅ Jogos da API registrados no controle. Nenhuma cartela sofreu alteração.');
+            console.log('✅ Jogos registrados no controle. Nenhuma cartela sofreu alteração.');
         } else {
-            console.log('✅ Tudo certo. Nenhuma alteração nova identificada nos manuais.');
+            console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
         }
         
     } catch (error) {
