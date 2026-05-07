@@ -179,7 +179,6 @@ cron.schedule('*/10 * * * *', async () => {
             controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
             if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
         } catch (e) {
-            // Cria o controle com a propriedade "ultimo_estado_manuais" para gerenciar rollbacks
             controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], ultimo_estado_manuais: "[]", type: "config" };
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
         }
@@ -195,7 +194,6 @@ cron.schedule('*/10 * * * *', async () => {
         }
         
         const jogosDaAPI = data.matches || [];
-        // Lista Mestra com TODOS os jogos finalizados do mundo real
         const todosJogosFinalizados = [...jogosDaAPI];
 
         // MÁGICA DO ROLLBACK: Verifica se você deletou ou alterou um jogo manual no Cloudant
@@ -229,7 +227,6 @@ cron.schedule('*/10 * * * *', async () => {
             jogo.isManual || !controleDoc.jogos_processados.includes(jogo.id)
         );
 
-        // Se não tem jogo novo da API, E você não mexeu/apagou nenhum manual, aborta! Economiza CPU.
         if (jogosOficiais.length === 0 && !teveAlteracaoManual) {
             console.log('✅ Tudo atualizado. Nenhum jogo novo e nenhum rollback detectado.');
             return;
@@ -257,28 +254,22 @@ cron.schedule('*/10 * * * *', async () => {
                 const time2Ingles = traduzirTime(palpite.time_2);
                 const dataPalpite = formatarDataISO(palpite.data_jogo);
 
-                // 1. Procura na lista Mestra (API + Manuais) pra ver se o jogo ESTÁ finalizado
                 const jogoFinalizado = todosJogosFinalizados.find(j => {
                     const home = formatarTexto(j.homeTeam.name);
                     const away = formatarTexto(j.awayTeam.name);
 
-                    // A NOVA TRAVA DE DATA BLINDADA (Com tolerância de ± 24 horas)
+                    // TRAVA DE DATA COM TOLERÂNCIA (± 24h)
                     let bateuData = false;
                     const dataAPI = formatarDataISO(j.utcDate);
 
                     if (!dataPalpite) {
-                        bateuData = true; // Passa se a cartela estiver sem data
+                        bateuData = true; 
                     } else if (j.isManual && !j.strictDate) {
-                        bateuData = true; // Passa se o jogo manual não tiver data definida
+                        bateuData = true; 
                     } else if (dataAPI) {
-                        // Força as duas datas para o meio-dia UTC, isolando o problema de fuso
                         const dPalpite = new Date(dataPalpite + "T12:00:00Z");
                         const dAPI = new Date(dataAPI + "T12:00:00Z");
-                        
-                        // Calcula a diferença absoluta em dias
                         const diffEmDias = Math.abs(dPalpite - dAPI) / (1000 * 60 * 60 * 24);
-                        
-                        // Se for no mesmo dia (0) ou a diferença for de 1 dia, deu Match!
                         bateuData = (diffEmDias <= 1); 
                     }
 
@@ -291,28 +282,43 @@ cron.schedule('*/10 * * * *', async () => {
                 });
 
                 if (jogoFinalizado) {
-                    // O Jogo FOI finalizado!
                     const home = formatarTexto(jogoFinalizado.homeTeam.name);
                     const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
                     
                     let placarReal1 = ordemExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
                     let placarReal2 = ordemExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
 
-                    // Ele só atualiza os pontos se for um jogo novo da API ou um Manual (que está nos jogosOficiais)
                     const precisaCalcular = jogosOficiais.some(jo => jo.id === jogoFinalizado.id);
                     
                     if (precisaCalcular) {
+                        // === NOVA LÓGICA DE PONTUAÇÃO ===
                         const palpite1 = palpite.placar_1;
                         const palpite2 = palpite.placar_2;
                         let pontosGanhos = 0;
 
-                        if (palpite1 === placarReal1 && palpite2 === placarReal2) {
-                            pontosGanhos = 5; 
-                        } else {
-                            const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
-                            const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                            if (vencedorReal === vencedorPalpite) pontosGanhos = 2; 
+                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
+                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+                        
+                        const diffReal = placarReal1 - placarReal2;
+                        const diffPalpite = palpite1 - palpite2;
+
+                        const acertouVencedor = (vencedorReal === vencedorPalpite);
+                        const acertouUmPlacar = (palpite1 === placarReal1 || palpite2 === placarReal2);
+                        const acertouDiferenca = (diffReal === diffPalpite);
+                        const acertouPlacarExato = (palpite1 === placarReal1 && palpite2 === placarReal2);
+
+                        if (acertouPlacarExato) {
+                            pontosGanhos = 10;
+                        } else if (acertouVencedor) {
+                            if (acertouDiferenca) {
+                                pontosGanhos = 7;
+                            } else if (acertouUmPlacar) {
+                                pontosGanhos = 5;
+                            } else {
+                                pontosGanhos = 3;
+                            }
                         }
+                        // ===================================
 
                         if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
                             palpite.pontos_obtidos = pontosGanhos;
@@ -322,12 +328,10 @@ cron.schedule('*/10 * * * *', async () => {
                         }
                     }
                 } else {
-                    // O Jogo NÃO ESTÁ MAIS finalizado (Foi removido do controle no Cloudant)
-                    // Se o usuário tinha pontos/placar oficial anotados aqui, nós deletamos! (Rollback)
                     if (palpite.placar_oficial_1 !== undefined) {
                         delete palpite.placar_oficial_1;
                         delete palpite.placar_oficial_2;
-                        palpite.pontos_obtidos = 0; // Remove os pontos também
+                        palpite.pontos_obtidos = 0; 
                         houveMudancaInterna = true;
                     }
                 }
