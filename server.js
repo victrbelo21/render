@@ -984,29 +984,134 @@ app.post('/forum/message/delete', async (req, res) => {
 });
 
 // =====================================================================
-// 6. ÁREA DE TROCAS (MESA DE NEGOCIAÇÕES - NOVO)
+// 6. ÁREA DE TROCAS
 // =====================================================================
 
-// Propor uma troca (Usuário A propõe para B)
+async function buscarCartelaUsuario(userEmail) {
+    const response = await cloudant.postFind({
+        db: DB_NAME,
+        selector: {
+            type: "cartela_usuario",
+            user_email: userEmail
+        },
+        limit: 1
+    });
+
+    return response.result.docs[0] || null;
+}
+
+function garantirAlbumValido(doc) {
+    if (!doc.album) {
+        doc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
+    }
+
+    if (!Array.isArray(doc.album.coladas)) doc.album.coladas = [];
+    if (!Array.isArray(doc.album.repetidas)) doc.album.repetidas = [];
+    if (!Array.isArray(doc.wishlist)) doc.wishlist = [];
+
+    return doc;
+}
+
+function possuiRepetida(doc, figId) {
+    return garantirAlbumValido(doc).album.repetidas.includes(parseInt(figId, 10));
+}
+
+function removerUmaRepetida(doc, figId) {
+    const id = parseInt(figId, 10);
+    const album = garantirAlbumValido(doc).album;
+    const index = album.repetidas.indexOf(id);
+
+    if (index === -1) return false;
+
+    album.repetidas.splice(index, 1);
+    return true;
+}
+
+function adicionarFigurinhaAoAlbum(doc, figId) {
+    const id = parseInt(figId, 10);
+    const album = garantirAlbumValido(doc).album;
+
+    if (album.coladas.includes(id)) {
+        album.repetidas.push(id);
+    } else {
+        album.coladas.push(id);
+    }
+}
+
+function ordenarTrocasMaisRecentes(a, b) {
+    const dataA = new Date(a.updated_at || a.created_at || a.timestamp || 0).getTime();
+    const dataB = new Date(b.updated_at || b.created_at || b.timestamp || 0).getTime();
+    return dataB - dataA;
+}
+
+// Jogador 1 propõe uma figurinha para o Jogador 2
 app.post('/trade/propose', async (req, res) => {
     try {
-        const { proponente_email, proponente_nome, parceiro_email, parceiro_nome, fig_id } = req.body;
-        
-        // Verifica se já existe uma proposta idêntica pendente para evitar spam
-        const busca = await cloudant.postFind({
+        const {
+            proponente_email,
+            proponente_nome,
+            parceiro_email,
+            parceiro_nome,
+            fig_id
+        } = req.body;
+
+        const proponenteFigId = parseInt(fig_id, 10);
+
+        if (!proponente_email || !parceiro_email || !proponenteFigId) {
+            return res.status(400).json({
+                success: false,
+                error: "Dados incompletos para criar a proposta."
+            });
+        }
+
+        if (proponente_email === parceiro_email) {
+            return res.status(400).json({
+                success: false,
+                error: "Você não pode propor troca com você mesmo."
+            });
+        }
+
+        const docProponente = await buscarCartelaUsuario(proponente_email);
+        const docParceiro = await buscarCartelaUsuario(parceiro_email);
+
+        if (!docProponente || !docParceiro) {
+            return res.status(404).json({
+                success: false,
+                error: "Não foi possível encontrar a cartela de um dos jogadores."
+            });
+        }
+
+        garantirAlbumValido(docProponente);
+        garantirAlbumValido(docParceiro);
+
+        if (!possuiRepetida(docProponente, proponenteFigId)) {
+            return res.status(400).json({
+                success: false,
+                error: "Você não tem mais essa figurinha repetida para oferecer."
+            });
+        }
+
+        const buscaDuplicada = await cloudant.postFind({
             db: DB_NAME,
             selector: {
                 type: "proposta_troca",
                 proponente_email,
                 parceiro_email,
-                fig_id: parseInt(fig_id),
-                status: "pendente"
+                proponente_fig_id: proponenteFigId,
+                status: {
+                    "$in": ["aguardando_contraoferta", "aguardando_confirmacao"]
+                }
             }
         });
 
-        if (busca.result.docs.length > 0) {
-            return res.status(400).json({ success: false, error: "Você já tem uma proposta igual pendente com este colega." });
+        if (buscaDuplicada.result.docs.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: "Você já tem uma proposta aberta com essa figurinha para este colega."
+            });
         }
+
+        const agora = new Date().toISOString();
 
         const proposta = {
             type: "proposta_troca",
@@ -1014,87 +1119,342 @@ app.post('/trade/propose', async (req, res) => {
             proponente_nome,
             parceiro_email,
             parceiro_nome,
-            fig_id: parseInt(fig_id),
-            status: "pendente",
-            timestamp: new Date().toISOString()
+            proponente_fig_id: proponenteFigId,
+            parceiro_fig_id: null,
+
+            // Compatibilidade com telas antigas que ainda leem fig_id
+            fig_id: proponenteFigId,
+
+            proponente_wishlist_snapshot: docProponente.wishlist || [],
+            parceiro_wishlist_snapshot: docParceiro.wishlist || [],
+
+            status: "aguardando_contraoferta",
+            created_at: agora,
+            updated_at: agora
         };
 
-        await cloudant.postDocument({ db: DB_NAME, document: proposta });
-        res.status(200).json({ success: true, message: "Oferta enviada para a mochila do colega!" });
+        await cloudant.postDocument({
+            db: DB_NAME,
+            document: proposta
+        });
+
+        res.status(200).json({
+            success: true,
+            message: "Oferta enviada. Agora aguarde a contraoferta do colega."
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: "Erro ao registrar proposta no Cloudant." });
+        console.error("Erro ao propor troca:", error);
+        res.status(500).json({
+            success: false,
+            error: "Erro ao registrar proposta no Cloudant."
+        });
     }
 });
 
-// Buscar propostas recebidas (Para o parceiro ver na tela dele)
+// Buscar trocas abertas do usuário
 app.post('/trade/inbox', async (req, res) => {
     try {
         const { user_email } = req.body;
+
+        if (!user_email) {
+            return res.status(400).json({
+                success: false,
+                error: "Usuário não informado."
+            });
+        }
+
+        const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
+
         const sent = await cloudant.postFind({
             db: DB_NAME,
-            selector: { type: "proposta_troca", proponente_email: user_email, status: "pendente" }
-        });
-        const received = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: "proposta_troca", parceiro_email: user_email, status: "pendente" }
+            selector: {
+                type: "proposta_troca",
+                proponente_email: user_email,
+                status: { "$in": statusAbertos }
+            },
+            limit: 100
         });
 
-        res.status(200).json({ 
-            success: true, 
-            enviadas: sent.result.docs, 
-            recebidas: received.result.docs 
+        const received = await cloudant.postFind({
+            db: DB_NAME,
+            selector: {
+                type: "proposta_troca",
+                parceiro_email: user_email,
+                status: { "$in": statusAbertos }
+            },
+            limit: 100
+        });
+
+        res.status(200).json({
+            success: true,
+            enviadas: sent.result.docs.sort(ordenarTrocasMaisRecentes),
+            recebidas: received.result.docs.sort(ordenarTrocasMaisRecentes)
         });
     } catch (error) {
-        res.status(500).json({ success: false });
+        console.error("Erro ao buscar inbox de trocas:", error);
+        res.status(500).json({
+            success: false,
+            error: "Erro ao buscar propostas de troca."
+        });
     }
 });
 
-// Responder a uma proposta (Aceitar ou Recusar)
+// Jogador 2 responde: recusa ou envia uma figurinha dele como contraoferta
 app.post('/trade/respond', async (req, res) => {
     try {
-        const { proposta_id, acao } = req.body; // 'aceitar' ou 'recusar'
-        const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
+        const {
+            proposta_id,
+            acao,
+            user_email,
+            minha_fig_id
+        } = req.body;
 
-        if (proposta.status !== 'pendente') {
-            return res.status(400).json({ success: false, error: "Esta proposta não está mais disponível." });
+        if (!proposta_id || !acao) {
+            return res.status(400).json({
+                success: false,
+                error: "Dados incompletos para responder a troca."
+            });
         }
 
-        if (acao === 'recusar') {
-            proposta.status = 'recusada';
-            await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
-            return res.json({ success: true, message: "Proposta recusada." });
+        const proposta = (await cloudant.getDocument({
+            db: DB_NAME,
+            docId: proposta_id
+        })).result;
+
+        const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
+
+        if (!statusAbertos.includes(proposta.status)) {
+            return res.status(400).json({
+                success: false,
+                error: "Esta proposta não está mais disponível."
+            });
         }
 
-        // LÓGICA DE ACEITE: Troca de posse das figurinhas no banco
-        const resProp = await cloudant.postFind({ db: DB_NAME, selector: { type: "cartela_usuario", user_email: proposta.proponente_email } });
-        const resParc = await cloudant.postFind({ db: DB_NAME, selector: { type: "cartela_usuario", user_email: proposta.parceiro_email } });
+        if (acao === "recusar" || acao === "cancelar") {
+            proposta.status = acao === "cancelar" ? "cancelada" : "recusada";
+            proposta.updated_at = new Date().toISOString();
 
-        const docProp = resProp.result.docs[0];
-        const docParc = resParc.result.docs[0];
+            await cloudant.putDocument({
+                db: DB_NAME,
+                docId: proposta_id,
+                document: proposta
+            });
 
-        const idxRep = docProp.album.repetidas.indexOf(proposta.fig_id);
-        if (idxRep === -1) {
-            proposta.status = 'expirada';
-            await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
-            return res.status(400).json({ success: false, error: "O proponente não tem mais essa figurinha repetida." });
+            return res.json({
+                success: true,
+                message: acao === "cancelar" ? "Proposta cancelada." : "Proposta recusada."
+            });
         }
 
-        // 1. Remove do proponente
-        docProp.album.repetidas.splice(idxRep, 1);
-
-        // 2. Adiciona ao parceiro (como colada ou repetida)
-        if (docParc.album.coladas.includes(proposta.fig_id)) {
-            docParc.album.repetidas.push(proposta.fig_id);
-        } else {
-            docParc.album.coladas.push(proposta.fig_id);
+        if (acao !== "contraofertar") {
+            return res.status(400).json({
+                success: false,
+                error: "Ação inválida para resposta de troca."
+            });
         }
 
-        proposta.status = 'aceita';
-        await cloudant.postBulkDocs({ db: DB_NAME, bulkDocs: { docs: [docProp, docParc, proposta] } });
+        if (proposta.status !== "aguardando_contraoferta") {
+            return res.status(400).json({
+                success: false,
+                error: "Esta troca já recebeu uma contraoferta."
+            });
+        }
 
-        res.json({ success: true, message: "Figurinha trocada com sucesso!" });
+        if (user_email && user_email !== proposta.parceiro_email) {
+            return res.status(403).json({
+                success: false,
+                error: "Apenas o parceiro pode contraofertar nesta troca."
+            });
+        }
+
+        const parceiroFigId = parseInt(minha_fig_id, 10);
+
+        if (!parceiroFigId) {
+            return res.status(400).json({
+                success: false,
+                error: "Escolha uma figurinha repetida para contraofertar."
+            });
+        }
+
+        const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
+
+        if (!docParceiro) {
+            return res.status(404).json({
+                success: false,
+                error: "Cartela do parceiro não encontrada."
+            });
+        }
+
+        if (!possuiRepetida(docParceiro, parceiroFigId)) {
+            return res.status(400).json({
+                success: false,
+                error: "Você não tem mais essa figurinha repetida para contraofertar."
+            });
+        }
+
+        proposta.parceiro_fig_id = parceiroFigId;
+        proposta.status = "aguardando_confirmacao";
+        proposta.updated_at = new Date().toISOString();
+
+        await cloudant.putDocument({
+            db: DB_NAME,
+            docId: proposta_id,
+            document: proposta
+        });
+
+        res.json({
+            success: true,
+            message: "Contraoferta enviada. Agora aguarde a confirmação do proponente."
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: "Falha na transação de troca." });
+        console.error("Erro ao responder troca:", error);
+        res.status(500).json({
+            success: false,
+            error: "Falha ao responder a proposta de troca."
+        });
+    }
+});
+
+// Jogador 1 confirma a troca completa e só aqui as cartelas são alteradas
+app.post('/trade/confirm', async (req, res) => {
+    try {
+        const {
+            proposta_id,
+            user_email,
+            acao
+        } = req.body;
+
+        if (!proposta_id || !acao) {
+            return res.status(400).json({
+                success: false,
+                error: "Dados incompletos para confirmar a troca."
+            });
+        }
+
+        const proposta = (await cloudant.getDocument({
+            db: DB_NAME,
+            docId: proposta_id
+        })).result;
+
+        if (user_email && user_email !== proposta.proponente_email) {
+            return res.status(403).json({
+                success: false,
+                error: "Apenas o proponente pode confirmar esta troca."
+            });
+        }
+
+        if (proposta.status !== "aguardando_confirmacao") {
+            return res.status(400).json({
+                success: false,
+                error: "Esta troca ainda não está pronta para confirmação."
+            });
+        }
+
+        if (acao === "recusar" || acao === "cancelar") {
+            proposta.status = acao === "cancelar" ? "cancelada" : "recusada_pelo_proponente";
+            proposta.updated_at = new Date().toISOString();
+
+            await cloudant.putDocument({
+                db: DB_NAME,
+                docId: proposta_id,
+                document: proposta
+            });
+
+            return res.json({
+                success: true,
+                message: "Troca encerrada sem movimentar figurinhas."
+            });
+        }
+
+        if (acao !== "confirmar") {
+            return res.status(400).json({
+                success: false,
+                error: "Ação inválida para confirmação de troca."
+            });
+        }
+
+        const proponenteFigId = parseInt(proposta.proponente_fig_id || proposta.fig_id, 10);
+        const parceiroFigId = parseInt(proposta.parceiro_fig_id, 10);
+
+        if (!proponenteFigId || !parceiroFigId) {
+            return res.status(400).json({
+                success: false,
+                error: "A troca está incompleta."
+            });
+        }
+
+        const docProponente = await buscarCartelaUsuario(proposta.proponente_email);
+        const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
+
+        if (!docProponente || !docParceiro) {
+            return res.status(404).json({
+                success: false,
+                error: "Não foi possível encontrar uma das cartelas."
+            });
+        }
+
+        garantirAlbumValido(docProponente);
+        garantirAlbumValido(docParceiro);
+
+        if (!possuiRepetida(docProponente, proponenteFigId)) {
+            proposta.status = "expirada";
+            proposta.updated_at = new Date().toISOString();
+
+            await cloudant.putDocument({
+                db: DB_NAME,
+                docId: proposta_id,
+                document: proposta
+            });
+
+            return res.status(400).json({
+                success: false,
+                error: "O proponente não tem mais a figurinha oferecida."
+            });
+        }
+
+        if (!possuiRepetida(docParceiro, parceiroFigId)) {
+            proposta.status = "expirada";
+            proposta.updated_at = new Date().toISOString();
+
+            await cloudant.putDocument({
+                db: DB_NAME,
+                docId: proposta_id,
+                document: proposta
+            });
+
+            return res.status(400).json({
+                success: false,
+                error: "O parceiro não tem mais a figurinha contraofertada."
+            });
+        }
+
+        removerUmaRepetida(docProponente, proponenteFigId);
+        removerUmaRepetida(docParceiro, parceiroFigId);
+
+        adicionarFigurinhaAoAlbum(docProponente, parceiroFigId);
+        adicionarFigurinhaAoAlbum(docParceiro, proponenteFigId);
+
+        proposta.status = "confirmada";
+        proposta.updated_at = new Date().toISOString();
+        proposta.confirmed_at = new Date().toISOString();
+
+        await cloudant.postBulkDocs({
+            db: DB_NAME,
+            bulkDocs: {
+                docs: [docProponente, docParceiro, proposta]
+            }
+        });
+
+        res.json({
+            success: true,
+            message: "Troca confirmada e cartelas atualizadas!"
+        });
+    } catch (error) {
+        console.error("Erro ao confirmar troca:", error);
+        res.status(500).json({
+            success: false,
+            error: "Falha na confirmação da troca."
+        });
     }
 });
 
