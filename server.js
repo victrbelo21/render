@@ -1475,6 +1475,64 @@ app.post('/trade/confirm', async (req, res) => {
 });
 
 // =====================================================================
+// ROTA DE ESTATÍSTICAS (Scraping Oficial do Sofascore)
+// =====================================================================
+app.get('/estatisticas/standings', async (req, res) => {
+    try {
+        console.log('📊 Buscando tabela oficial no Sofascore...');
+        
+        // A URL secreta que descobrimos com os IDs exatos da Copa 2026
+        const sofaUrl = 'https://api.sofascore.com/api/v1/unique-tournament/16/season/58210/standings/total';
+        
+        const response = await fetch(sofaUrl, {
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://www.sofascore.com',
+                'Referer': 'https://www.sofascore.com/'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Sofascore bloqueou com status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // O Sofascore retorna um array "standings" onde cada item é um grupo
+        const grupos = data.standings || [];
+        
+        const tabelaLimpa = {};
+
+        // Vamos formatar para ficar fácil pro nosso Frontend ler
+        grupos.forEach(grupo => {
+            // O nome do grupo vem como "World Cup, Group A", vamos pegar só a última letra
+            const letraGrupo = grupo.tournament.name.split(' ').pop(); 
+            
+            tabelaLimpa[letraGrupo] = grupo.rows.map(linha => ({
+                posicao: linha.position,
+                time: linha.team.name,
+                bandeiraId: linha.team.id, // Dá pra usar pra puxar o escudo depois se quiser
+                pontos: linha.points,
+                jogos: linha.matches,
+                vitorias: linha.wins,
+                empates: linha.draws,
+                derrotas: linha.losses,
+                golsPro: linha.scoresFor,
+                golsContra: linha.scoresAgainst,
+                saldo: linha.scoresFor - linha.scoresAgainst
+            }));
+        });
+
+        res.status(200).json({ success: true, grupos: tabelaLimpa });
+
+    } catch (error) {
+        console.error("❌ Erro ao buscar tabela do Sofascore:", error);
+        res.status(500).json({ success: false, error: 'Erro ao extrair estatísticas.' });
+    }
+});
+
+// =====================================================================
 // 7. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
