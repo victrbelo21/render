@@ -1612,13 +1612,16 @@ app.get('/estatisticas/elencos', async (req, res) => {
                     // Alguns jogadores podem vir sem o "jerseyNum" ou como -1
                     const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
                     
+                    // Pega a versão da imagem se existir, senão deixa vazio
+                    const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
+
                     elenco.push({
                         nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
                         posicao: pos, 
                         nascimento: nascimento,
                         camisa: camisaNum,
-                        // URL da foto oficial do 365Scores (w_72,h_72 para economizar banda)
-                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${atleta.id}`
+                        // A MÁGICA ACONTECE AQUI: Adicionamos o ${imgVersion} na URL
+                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/${imgVersion}Athletes/Player_${atleta.id}`
                     });
 
                     if (pos === "Treinador") treinadorEncontrado = true;
