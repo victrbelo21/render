@@ -1482,7 +1482,7 @@ app.post('/trade/confirm', async (req, res) => {
 const API_FOOTBALL_KEY = 'f88a49f518a4c6e1482c88b70ec46dfe'; // CHAVE DIRETA NO CÓDIGO
 const API_FOOTBALL_HOST = 'v3.football.api-sports.io';
 const WORLD_CUP_LEAGUE_ID = 1; // ID oficial da Copa na API-Football
-const SEASON_YEAR = 2026;
+const SEASON_YEAR = 2022;
 
 // Função auxiliar exclusiva para chamadas à API-Football
 const fetchApiFootball = async (endpoint) => {
