@@ -1612,7 +1612,7 @@ app.get('/estatisticas/elencos', async (req, res) => {
                     // Alguns jogadores podem vir sem o "jerseyNum" ou como -1
                     const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
                     
-                    // Pega a versão da imagem se existir, senão deixa vazio
+                    // Pega a versão da imagem se existir
                     const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
 
                     elenco.push({
@@ -1620,8 +1620,8 @@ app.get('/estatisticas/elencos', async (req, res) => {
                         posicao: pos, 
                         nascimento: nascimento,
                         camisa: camisaNum,
-                        // A MÁGICA ACONTECE AQUI: Adicionamos o ${imgVersion} na URL
-                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/${imgVersion}Athletes/NationalTeam/${atleta.id}`
+                        // URL TURBINADA: Foco no rosto (g_face), zoom (z_0.65) e corte redondo (r_max)
+                        foto: `https://imagecache.365scores.com/image/upload/f_png,w_80,h_80,c_limit,q_auto:eco,dpr_2,d_Athletes:${atleta.id}.png,r_max,c_thumb,g_face,z_0.65/${imgVersion}Athletes/NationalTeam/${atleta.id}`
                     });
 
                     if (pos === "Treinador") treinadorEncontrado = true;
