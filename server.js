@@ -726,8 +726,8 @@ app.post('/abrir-pacote', async (req, res) => {
 
         // --- HIGIENIZAÇÃO PERMANENTE ANTES DE SALVAR ---
         // Garante que o banco seja limpo de vez na próxima interação do usuário
-        userDoc.album.coladas = (userDoc.album.coladas || []).filter(id => id >= 1 && id <= 81);
-        userDoc.album.repetidas = (userDoc.album.repetidas || []).filter(id => id >= 1 && id <= 81);
+        userDoc.album.coladas = (userDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
+        userDoc.album.repetidas = (userDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
 
         const stringSP = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" });
         const dataSP = new Date(stringSP);
