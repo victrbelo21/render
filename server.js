@@ -1565,7 +1565,7 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
     }
 });
 
-// 2. ELENCOS (Squads via 365Scores - Relacional)
+// 2. ELENCOS (Squads via 365Scores - Formato 2026)
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
@@ -1586,39 +1586,47 @@ app.get('/estatisticas/elencos', async (req, res) => {
         const elenco = [];
         let treinadorEncontrado = false;
 
-        // O 365Scores separa os elencos (squads) dos dados pessoais (athletes)
         if (data.squads && data.squads.length > 0) {
-            // Pega o elenco que corresponde à seleção pedida
             const squadDoTime = data.squads.find(s => s.competitorId == teamId) || data.squads[0];
             
-            // Garante que temos a lista de membros E a "gaveta" de atletas para cruzar os dados
-            if (squadDoTime && squadDoTime.members && data.athletes) {
+            // O novo formato traz os jogadores diretamente dentro de squadDoTime.athletes
+            if (squadDoTime && squadDoTime.athletes) {
                 
-                squadDoTime.members.forEach(member => {
-                    // MÁGICA: Procura o perfil real do atleta usando o ID relacional!
-                    const atleta = data.athletes.find(a => a.id === member.athleteId);
+                squadDoTime.athletes.forEach(atleta => {
+                    const nascimento = atleta.birthdate ? atleta.birthdate.split('-')[0] : '-';
                     
-                    if (atleta) {
-                        const nascimento = atleta.dateOfBirth ? atleta.dateOfBirth.split('-')[0] : '-';
-                        const pos = mapPosicao(member.type);
-                        
-                        elenco.push({
-                            // Prioriza o "nome de URL" que costuma ser o nome de guerra (ex: Vini Jr)
-                            nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : atleta.name,
-                            posicao: pos, 
-                            nascimento: nascimento,
-                            camisa: member.jerseyNumber || '-',
-                            foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${atleta.id}`
-                        });
-
-                        if (pos === "Treinador") treinadorEncontrado = true;
+                    // Identifica se é Treinador/Staff ou Jogador.
+                    // O 365Scores manda um position.id = 0 ou position.isStaff = true para o técnico.
+                    let pos = "Indefinido";
+                    if (atleta.position) {
+                        if (atleta.position.isStaff || atleta.position.id === 0) {
+                            pos = "Treinador";
+                        } else {
+                            // Se tiver outras posições listadas lá dentro, o mapPosicao resolve.
+                            // Mas se a API não mandar o ID da posição do jogador de linha claramente,
+                            // nós garantimos um fallback.
+                            pos = mapPosicao(atleta.position.id) || atleta.position.name || "Jogador de Linha";
+                        }
                     }
+
+                    // Alguns jogadores podem vir sem o "jerseyNum" ou como -1
+                    const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
+                    
+                    elenco.push({
+                        nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
+                        posicao: pos, 
+                        nascimento: nascimento,
+                        camisa: camisaNum,
+                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${atleta.id}`
+                    });
+
+                    if (pos === "Treinador") treinadorEncontrado = true;
                 });
             }
         }
 
-        // Fallback: Se o 365Scores não mandar o técnico (ou mandar o array vazio), a gente avisa o Front
-        if (!treinadorEncontrado) {
+        // Se o 365Scores não mandar o técnico
+        if (!treinadorEncontrado && elenco.length > 0) {
              elenco.push({
                  nome: "Não informado oficialmente",
                  posicao: "Treinador",
