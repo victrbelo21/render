@@ -1565,7 +1565,7 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
     }
 });
 
-// 2. ELENCOS (Squads via 365Scores)
+// 2. ELENCOS (Squads via 365Scores - Relacional)
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
@@ -1586,41 +1586,41 @@ app.get('/estatisticas/elencos', async (req, res) => {
         const elenco = [];
         let treinadorEncontrado = false;
 
-        // O 365Scores pode colocar a lista em data.competitors ou aninhado em squads
-        // Vamos varrer o objeto competitors principal (como visto no seu print)
-        if (data.competitors && Array.isArray(data.competitors)) {
-            // A API envia o time principal (Brasil) e depois os times onde os jogadores jogam (PSG, etc)
-            // Vamos iterar sobre data.squads para pegar os membros reais atrelados ao timeId
-            if (data.squads && data.squads.length > 0) {
-                // Procura o squad que pertence ao teamId solicitado
-                const squadDoTime = data.squads.find(s => s.competitorId == teamId);
+        // O 365Scores separa os elencos (squads) dos dados pessoais (athletes)
+        if (data.squads && data.squads.length > 0) {
+            // Pega o elenco que corresponde à seleção pedida
+            const squadDoTime = data.squads.find(s => s.competitorId == teamId) || data.squads[0];
+            
+            // Garante que temos a lista de membros E a "gaveta" de atletas para cruzar os dados
+            if (squadDoTime && squadDoTime.members && data.athletes) {
                 
-                if (squadDoTime && squadDoTime.members) {
-                    squadDoTime.members.forEach(m => {
-                        const nascimento = m.dateOfBirth ? m.dateOfBirth.split('-')[0] : '-';
-                        const pos = mapPosicao(m.type);
+                squadDoTime.members.forEach(member => {
+                    // MÁGICA: Procura o perfil real do atleta usando o ID relacional!
+                    const atleta = data.athletes.find(a => a.id === member.athleteId);
+                    
+                    if (atleta) {
+                        const nascimento = atleta.dateOfBirth ? atleta.dateOfBirth.split('-')[0] : '-';
+                        const pos = mapPosicao(member.type);
                         
                         elenco.push({
-                            nome: m.name,
+                            // Prioriza o "nome de URL" que costuma ser o nome de guerra (ex: Vini Jr)
+                            nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : atleta.name,
                             posicao: pos, 
                             nascimento: nascimento,
-                            camisa: m.jerseyNumber || '-',
-                            // Usa o template de imagem do 365Scores
-                            foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${m.id}`
+                            camisa: member.jerseyNumber || '-',
+                            foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${atleta.id}`
                         });
 
                         if (pos === "Treinador") treinadorEncontrado = true;
-                    });
-                }
+                    }
+                });
             }
         }
 
-        // Se o 365Scores não enviou o treinador (o que acontece frequentemente na API gratuita deles fora de época de torneio)
-        // Nós inserimos um "Treinador Genérico" apenas para o frontend não bugar, ou deixamos a responsabilidade para o front
-        if (!treinadorEncontrado && elenco.length > 0) {
-             console.log(`⚠️ Treinador não listado pela API para o time ${teamId}. Inserindo placeholder.`);
+        // Fallback: Se o 365Scores não mandar o técnico (ou mandar o array vazio), a gente avisa o Front
+        if (!treinadorEncontrado) {
              elenco.push({
-                 nome: "Técnico Oficial",
+                 nome: "Não informado oficialmente",
                  posicao: "Treinador",
                  nascimento: "-",
                  camisa: "-",
