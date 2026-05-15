@@ -1533,6 +1533,38 @@ app.get('/estatisticas/standings', async (req, res) => {
     }
 });
 
+// 5. CHAVEAMENTO (Mata-Mata - Oficial FIFA)
+app.get('/estatisticas/chaveamento', async (req, res) => {
+    try {
+        console.log('🌳 Buscando árvore do mata-mata na API da FIFA...');
+        
+        const fifaStagesUrl = 'https://api.fifa.com/api/v3/stages?idSeason=285023&language=pt';
+        const response = await fetch(fifaStagesUrl);
+        
+        if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
+        
+        const data = await response.json();
+        
+        // A API da FIFA pode retornar os dados dentro de 'Results' ou direto no array
+        const stages = data.Results || (Array.isArray(data) ? data : []);
+
+        if (stages.length > 0) {
+            // Filtra para pegar apenas as fases de mata-mata (normalmente a Fase de Grupos não é eliminatória)
+            // A FIFA costuma usar propriedades como 'IsGroupStage' = false ou nomes específicos
+            const fasesEliminatorias = stages.filter(fase => !fase.IsGroupStage || fase.Name?.[0]?.Description?.toLowerCase().includes('final'));
+            
+            res.status(200).json({ success: true, fases: fasesEliminatorias, status: 'ativo' });
+        } else {
+            // Se a FIFA retornar vazio (muito comum anos antes do torneio)
+            res.status(200).json({ success: true, fases: [], status: 'aguardando_fase_grupos' });
+        }
+
+    } catch (error) {
+        console.error("❌ Erro na API da FIFA (Chaveamento):", error);
+        res.status(500).json({ success: false, error: 'Erro ao extrair o chaveamento da FIFA.' });
+    }
+});
+
 // Como zeramos a API-Football, deixei as outras rotas "dormentes" por enquanto 
 // até você fazer o seu trabalho de detetive e achar as URLs da FIFA para elas também!
 app.get('/estatisticas/elencos', (req, res) => res.json({ success: true, status: 'aguardando_convocacoes' }));
