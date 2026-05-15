@@ -1617,6 +1617,7 @@ app.get('/estatisticas/elencos', async (req, res) => {
                         posicao: pos, 
                         nascimento: nascimento,
                         camisa: camisaNum,
+                        // URL da foto oficial do 365Scores (w_72,h_72 para economizar banda)
                         foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${atleta.id}`
                     });
 
