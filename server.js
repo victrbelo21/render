@@ -1475,99 +1475,112 @@ app.post('/trade/confirm', async (req, res) => {
 });
 
 // =====================================================================
-// ROTAS DE ESTATÍSTICAS (API OFICIAL FOOTBALL-DATA.ORG)
+// 8. ROTAS DE ESTATÍSTICAS (API-FOOTBALL / RAPIDAPI)
+// Exclusivo para a página de Estatísticas - Não afeta o Bolão!
 // =====================================================================
+
+const API_FOOTBALL_KEY = 'f88a49f518a4c6e1482c88b70ec46dfe'; // CHAVE DIRETA NO CÓDIGO
+const API_FOOTBALL_HOST = 'v3.football.api-sports.io';
+const WORLD_CUP_LEAGUE_ID = 1; // ID oficial da Copa na API-Football
+const SEASON_YEAR = 2026;
+
+// Função auxiliar exclusiva para chamadas à API-Football
+const fetchApiFootball = async (endpoint) => {
+    const url = `https://${API_FOOTBALL_HOST}/${endpoint}`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            'x-apisports-key': API_FOOTBALL_KEY
+        }
+    });
+    
+    if (!response.ok) throw new Error(`Erro API-Football: ${response.status}`);
+    const data = await response.json();
+    if (data.errors && Object.keys(data.errors).length > 0) {
+        throw new Error(`Erro Interno API: ${JSON.stringify(data.errors)}`);
+    }
+    
+    return data.response;
+};
 
 // 1. CLASSIFICAÇÃO (Tabela de Grupos)
 app.get('/estatisticas/standings', async (req, res) => {
     try {
-        console.log('📊 A buscar tabela oficial na Football-Data...');
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/standings`, {
-            headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
-        });
-
-        if (!response.ok) throw new Error(`A API bloqueou com status: ${response.status}`);
-
-        const data = await response.json();
+        console.log('📊 A buscar tabela oficial na API-Football...');
+        const standingsData = await fetchApiFootball(`standings?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
+        
         const tabelaLimpa = {};
 
-        if (data.standings) {
-            data.standings.forEach(grupo => {
-                const letraGrupo = grupo.group.replace('GROUP_', '');
-                tabelaLimpa[letraGrupo] = grupo.table.map(linha => ({
-                    posicao: linha.position,
+        if (standingsData && standingsData.length > 0 && standingsData[0].league.standings) {
+            standingsData[0].league.standings.forEach(grupoInfo => {
+                const nomeGrupoRaw = grupoInfo[0].group; 
+                const letraGrupo = nomeGrupoRaw.replace('Group ', '').trim();
+                
+                tabelaLimpa[letraGrupo] = grupoInfo.map(linha => ({
+                    posicao: linha.rank,
                     time: linha.team.name,
-                    escudo: linha.team.crest,
+                    escudo: linha.team.logo, // Logo oficial em PNG da API-Football
                     pontos: linha.points,
-                    jogos: linha.playedGames,
-                    vitorias: linha.won,
-                    empates: linha.draw,
-                    derrotas: linha.lost,
-                    golsPro: linha.goalsFor,
-                    golsContra: linha.goalsAgainst,
-                    saldo: linha.goalDifference
+                    jogos: linha.all.played,
+                    vitorias: linha.all.win,
+                    empates: linha.all.draw,
+                    derrotas: linha.all.lose,
+                    golsPro: linha.all.goals.for,
+                    golsContra: linha.all.goals.against,
+                    saldo: linha.goalsDiff,
+                    forma: linha.form || '-' // Histórico recente
                 }));
             });
         }
 
         res.status(200).json({ success: true, grupos: tabelaLimpa });
     } catch (error) {
-        console.error("❌ Erro ao buscar tabela:", error);
+        console.error("❌ Erro ao buscar tabela na API-Football:", error);
         res.status(500).json({ success: false, error: 'Erro ao extrair classificação.' });
     }
 });
 
-// 2. ELENCOS E TÉCNICOS
+// 2. ELENCOS E DADOS DOS TIMES (Inclui fotos dos estádios)
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
-        console.log('📋 A buscar elencos oficiais...');
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/teams`, {
-            headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
-        });
-
-        if (!response.ok) throw new Error(`Erro API: ${response.status}`);
-
-        const data = await response.json();
+        console.log('📋 A buscar equipas na API-Football...');
+        const teamsData = await fetchApiFootball(`teams?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
         
-        const elencosLimpos = data.teams.map(team => ({
-            id: team.id,
-            nome: team.name,
-            tla: team.tla, 
-            escudo: team.crest,
-            tecnico: team.coach?.name || 'A definir',
-            jogadores: (team.squad || []).map(player => ({
-                nome: player.name,
-                posicao: player.position,
-                nascimento: player.dateOfBirth
-            }))
+        const elencosLimpos = teamsData.map(item => ({
+            id: item.team.id,
+            nome: item.team.name,
+            tla: item.team.code, 
+            escudo: item.team.logo,
+            estadio: {
+                nome: item.venue.name,
+                cidade: item.venue.city,
+                capacidade: item.venue.capacity,
+                foto: item.venue.image // Foto real do estádio!
+            }
         }));
 
         res.status(200).json({ success: true, selecoes: elencosLimpos });
     } catch (error) {
         console.error("❌ Erro ao buscar elencos:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair elencos.' });
+        res.status(500).json({ success: false, error: 'Erro ao extrair equipas.' });
     }
 });
 
-// 3. TOP ARTILHEIROS
+// 3. TOP ARTILHEIROS (Com fotos reais dos jogadores)
 app.get('/estatisticas/artilheiros', async (req, res) => {
     try {
-        console.log('⚽ A buscar artilharia...');
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/scorers`, {
-            headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
-        });
-
-        if (!response.ok) throw new Error(`Erro API: ${response.status}`);
-
-        const data = await response.json();
+        console.log('⚽ A buscar top scorers na API-Football...');
+        const scorersData = await fetchApiFootball(`players/topscorers?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
         
-        const artilheirosLimpos = (data.scorers || []).map(s => ({
+        const artilheirosLimpos = scorersData.map(s => ({
             nome: s.player.name,
-            time: s.team.name,
-            timeEscudo: s.team.crest,
-            gols: s.goals,
-            assistencias: s.assists || 0,
-            jogos: s.playedMatches
+            foto: s.player.photo, // Vantagem absurda: FOTOS REAIS!
+            time: s.statistics[0].team.name,
+            timeEscudo: s.statistics[0].team.logo,
+            gols: s.statistics[0].goals.total,
+            assistencias: s.statistics[0].goals.assists || 0,
+            jogos: s.statistics[0].games.appearences,
+            minutos: s.statistics[0].games.minutes
         }));
 
         res.status(200).json({ success: true, artilheiros: artilheirosLimpos });
@@ -1578,45 +1591,51 @@ app.get('/estatisticas/artilheiros', async (req, res) => {
 });
 
 // 4. HISTÓRICO DE CONFRONTOS (H2H)
-// Requer o ID da partida (que já temos na rota principal de jogos)
-app.get('/estatisticas/h2h/:matchId', async (req, res) => {
+app.get('/estatisticas/h2h', async (req, res) => {
     try {
-        const { matchId } = req.params;
-        console.log(`⚔️ A buscar histórico de confrontos para o jogo ${matchId}...`);
-        
-        const response = await fetch(`https://api.football-data.org/v4/matches/${matchId}`, {
-            headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
-        });
-
-        if (!response.ok) throw new Error(`Erro API: ${response.status}`);
-
-        const data = await response.json();
-        
-        if (!data.head2head) {
-            return res.status(200).json({ success: true, h2h: null, message: "Histórico indisponível." });
+        const { team1_id, team2_id } = req.query;
+        if (!team1_id || !team2_id) {
+            return res.status(400).json({ success: false, error: "IDs das equipas não fornecidos." });
         }
 
+        console.log(`⚔️ A buscar H2H para equipas ${team1_id} e ${team2_id}...`);
+        const h2hData = await fetchApiFootball(`fixtures/headtohead?h2h=${team1_id}-${team2_id}`);
+
+        if (!h2hData || h2hData.length === 0) {
+            return res.status(200).json({ success: true, h2h: null, message: "Sem histórico entre estas seleções." });
+        }
+
+        let vitTeam1 = 0;
+        let vitTeam2 = 0;
+        let empates = 0;
+        let golsTeam1 = 0;
+        let golsTeam2 = 0;
+
+        h2hData.forEach(match => {
+            const isTeam1Home = match.teams.home.id == team1_id;
+            const goals1 = isTeam1Home ? match.goals.home : match.goals.away;
+            const goals2 = isTeam1Home ? match.goals.away : match.goals.home;
+            
+            golsTeam1 += goals1 || 0;
+            golsTeam2 += goals2 || 0;
+
+            if (goals1 > goals2) vitTeam1++;
+            else if (goals2 > goals1) vitTeam2++;
+            else empates++;
+        });
+
         const h2h = {
-            totalJogos: data.head2head.numberOfMatches,
-            totalGols: data.head2head.totalGoals,
-            timeCasa: {
-                nome: data.match.homeTeam.name,
-                vitorias: data.head2head.homeTeam.wins,
-                empates: data.head2head.homeTeam.draws,
-                derrotas: data.head2head.homeTeam.losses
-            },
-            timeFora: {
-                nome: data.match.awayTeam.name,
-                vitorias: data.head2head.awayTeam.wins,
-                empates: data.head2head.awayTeam.draws,
-                derrotas: data.head2head.awayTeam.losses
-            }
+            totalJogos: h2hData.length,
+            time1: { vitorias: vitTeam1, gols: golsTeam1 },
+            time2: { vitorias: vitTeam2, gols: golsTeam2 },
+            empates: empates,
+            ultimoJogo: h2hData[0] ? h2hData[0].fixture.date : null
         };
 
         res.status(200).json({ success: true, h2h });
     } catch (error) {
         console.error("❌ Erro ao buscar H2H:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair histórico de confrontos.' });
+        res.status(500).json({ success: false, error: 'Erro ao extrair histórico.' });
     }
 });
 
