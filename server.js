@@ -1565,9 +1565,70 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
     }
 });
 
-// Como zeramos a API-Football, deixei as outras rotas "dormentes" por enquanto 
-// até você fazer o seu trabalho de detetive e achar as URLs da FIFA para elas também!
-app.get('/estatisticas/elencos', (req, res) => res.json({ success: true, status: 'aguardando_convocacoes' }));
+// 2. ELENCOS (Squads via 365Scores)
+app.get('/estatisticas/elencos', async (req, res) => {
+    try {
+        const teamId = req.query.teamId;
+
+        // Se não mandar teamId, a gente ainda não puxa ninguem. 
+        // No futuro, a gente pode fazer o frontend pedir a lista completa de IDs de times.
+        if (!teamId) {
+             return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
+        }
+
+        console.log(`👕 Buscando elenco do time ${teamId} no 365Scores...`);
+        
+        // A URL mágica que você encontrou, agora dinâmica!
+        const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
+        
+        const response = await fetch(scoresUrl);
+        if (!response.ok) throw new Error(`O 365Scores bloqueou com status: ${response.status}`);
+        
+        const data = await response.json();
+        
+        // Vamos extrair os dados mastigados. 
+        // O 365Scores manda a lista de jogadores dentro de squads[0].members
+        const elenco = [];
+        if (data.squads && data.squads.length > 0 && data.squads[0].members) {
+             data.squads[0].members.forEach(m => {
+                 // A API manda a data de nascimento completa. Vamos pegar só o ano.
+                 const nascimento = m.dateOfBirth ? m.dateOfBirth.split('-')[0] : '-';
+                 
+                 elenco.push({
+                     nome: m.name,
+                     // O 365Scores manda o tipo do jogador em 'type'. 1 costuma ser goleiro, 2 defesa, 3 meio, 4 ataque, 5 tecnico.
+                     posicao: mapPosicao(m.type), 
+                     nascimento: nascimento,
+                     camisa: m.jerseyNumber || '-',
+                     foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${m.id}`
+                 });
+             });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            status: 'ativo', 
+            elenco: elenco 
+        });
+
+    } catch (error) {
+        console.error("❌ Erro na API do 365Scores:", error);
+        res.status(500).json({ success: false, error: 'Erro ao extrair elenco.' });
+    }
+});
+
+// Funçãosinha auxiliar pra traduzir o ID de posição do 365Scores pro nosso português
+function mapPosicao(typeId) {
+    const posicoes = {
+        1: "Goleiro",
+        2: "Defensor",
+        3: "Meio-campo",
+        4: "Atacante",
+        5: "Treinador"
+    };
+    return posicoes[typeId] || "Indefinido";
+}
+
 app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, status: 'aguardando_gols' }));
 app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
 
