@@ -1476,15 +1476,13 @@ app.post('/trade/confirm', async (req, res) => {
 
 // =====================================================================
 // 8. ROTAS DE ESTATÍSTICAS (API-FOOTBALL / RAPIDAPI)
-// Exclusivo para a página de Estatísticas - Não afeta o Bolão!
 // =====================================================================
 
-const API_FOOTBALL_KEY = 'f88a49f518a4c6e1482c88b70ec46dfe'; // CHAVE DIRETA NO CÓDIGO
+const API_FOOTBALL_KEY = 'f88a49f518a4c6e1482c88b70ec46dfe'; // Sua chave direta
 const API_FOOTBALL_HOST = 'v3.football.api-sports.io';
-const WORLD_CUP_LEAGUE_ID = 1; // ID oficial da Copa na API-Football
-const SEASON_YEAR = 2022;
+const WORLD_CUP_LEAGUE_ID = 1; // ID oficial da Copa
+const SEASON_YEAR = 2026; // Voltamos para 2026!
 
-// Função auxiliar exclusiva para chamadas à API-Football
 const fetchApiFootball = async (endpoint) => {
     const url = `https://${API_FOOTBALL_HOST}/${endpoint}`;
     const response = await fetch(url, {
@@ -1496,21 +1494,18 @@ const fetchApiFootball = async (endpoint) => {
     
     if (!response.ok) throw new Error(`Erro API-Football: ${response.status}`);
     const data = await response.json();
-    if (data.errors && Object.keys(data.errors).length > 0) {
-        throw new Error(`Erro Interno API: ${JSON.stringify(data.errors)}`);
-    }
-    
-    return data.response;
+    return data.response; // Ignoramos os "errors" da API pois quando o ano não existe, ela manda um array vazio sem erro fatal.
 };
 
 // 1. CLASSIFICAÇÃO (Tabela de Grupos)
 app.get('/estatisticas/standings', async (req, res) => {
     try {
-        console.log('📊 A buscar tabela oficial na API-Football...');
+        console.log('📊 Buscando tabela oficial na API-Football (2026)...');
         const standingsData = await fetchApiFootball(`standings?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
         
         const tabelaLimpa = {};
 
+        // Se a API retornar grupos (quando o sorteio da FIFA sair)
         if (standingsData && standingsData.length > 0 && standingsData[0].league.standings) {
             standingsData[0].league.standings.forEach(grupoInfo => {
                 const nomeGrupoRaw = grupoInfo[0].group; 
@@ -1519,7 +1514,7 @@ app.get('/estatisticas/standings', async (req, res) => {
                 tabelaLimpa[letraGrupo] = grupoInfo.map(linha => ({
                     posicao: linha.rank,
                     time: linha.team.name,
-                    escudo: linha.team.logo, // Logo oficial em PNG da API-Football
+                    escudo: linha.team.logo, 
                     pontos: linha.points,
                     jogos: linha.all.played,
                     vitorias: linha.all.win,
@@ -1527,63 +1522,64 @@ app.get('/estatisticas/standings', async (req, res) => {
                     derrotas: linha.all.lose,
                     golsPro: linha.all.goals.for,
                     golsContra: linha.all.goals.against,
-                    saldo: linha.goalsDiff,
-                    forma: linha.form || '-' // Histórico recente
+                    saldo: linha.goalsDiff
                 }));
             });
+            res.status(200).json({ success: true, grupos: tabelaLimpa, status: 'ativo' });
+        } else {
+            // Se a API retornar vazio (Grupos ainda não sorteados)
+            res.status(200).json({ success: true, grupos: {}, status: 'aguardando_sorteio' });
         }
 
-        res.status(200).json({ success: true, grupos: tabelaLimpa });
     } catch (error) {
         console.error("❌ Erro ao buscar tabela na API-Football:", error);
         res.status(500).json({ success: false, error: 'Erro ao extrair classificação.' });
     }
 });
 
-// 2. ELENCOS E DADOS DOS TIMES (Inclui fotos dos estádios)
+// 2. ELENCOS E DADOS DOS TIMES
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
-        console.log('📋 A buscar equipas na API-Football...');
+        console.log('📋 Buscando equipes na API-Football...');
         const teamsData = await fetchApiFootball(`teams?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
         
+        if (!teamsData || teamsData.length === 0) {
+            return res.status(200).json({ success: true, selecoes: [], status: 'aguardando_convocacoes' });
+        }
+
         const elencosLimpos = teamsData.map(item => ({
             id: item.team.id,
             nome: item.team.name,
-            tla: item.team.code, 
-            escudo: item.team.logo,
-            estadio: {
-                nome: item.venue.name,
-                cidade: item.venue.city,
-                capacidade: item.venue.capacity,
-                foto: item.venue.image // Foto real do estádio!
-            }
+            escudo: item.team.logo
         }));
 
-        res.status(200).json({ success: true, selecoes: elencosLimpos });
+        res.status(200).json({ success: true, selecoes: elencosLimpos, status: 'ativo' });
     } catch (error) {
         console.error("❌ Erro ao buscar elencos:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair equipas.' });
+        res.status(500).json({ success: false, error: 'Erro ao extrair equipes.' });
     }
 });
 
-// 3. TOP ARTILHEIROS (Com fotos reais dos jogadores)
+// 3. TOP ARTILHEIROS
 app.get('/estatisticas/artilheiros', async (req, res) => {
     try {
-        console.log('⚽ A buscar top scorers na API-Football...');
+        console.log('⚽ Buscando artilheiros na API-Football...');
         const scorersData = await fetchApiFootball(`players/topscorers?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
         
+        if (!scorersData || scorersData.length === 0) {
+            return res.status(200).json({ success: true, artilheiros: [], status: 'aguardando_gols' });
+        }
+
         const artilheirosLimpos = scorersData.map(s => ({
             nome: s.player.name,
-            foto: s.player.photo, // Vantagem absurda: FOTOS REAIS!
+            foto: s.player.photo, 
             time: s.statistics[0].team.name,
             timeEscudo: s.statistics[0].team.logo,
             gols: s.statistics[0].goals.total,
-            assistencias: s.statistics[0].goals.assists || 0,
-            jogos: s.statistics[0].games.appearences,
-            minutos: s.statistics[0].games.minutes
+            jogos: s.statistics[0].games.appearences
         }));
 
-        res.status(200).json({ success: true, artilheiros: artilheirosLimpos });
+        res.status(200).json({ success: true, artilheiros: artilheirosLimpos, status: 'ativo' });
     } catch (error) {
         console.error("❌ Erro ao buscar artilharia:", error);
         res.status(500).json({ success: false, error: 'Erro ao extrair artilheiros.' });
@@ -1595,21 +1591,17 @@ app.get('/estatisticas/h2h', async (req, res) => {
     try {
         const { team1_id, team2_id } = req.query;
         if (!team1_id || !team2_id) {
-            return res.status(400).json({ success: false, error: "IDs das equipas não fornecidos." });
+            return res.status(400).json({ success: false, error: "IDs das equipes não fornecidos." });
         }
 
-        console.log(`⚔️ A buscar H2H para equipas ${team1_id} e ${team2_id}...`);
+        console.log(`⚔️ Buscando H2H para equipes ${team1_id} e ${team2_id}...`);
         const h2hData = await fetchApiFootball(`fixtures/headtohead?h2h=${team1_id}-${team2_id}`);
 
         if (!h2hData || h2hData.length === 0) {
-            return res.status(200).json({ success: true, h2h: null, message: "Sem histórico entre estas seleções." });
+            return res.status(200).json({ success: true, h2h: null, message: "Sem histórico oficial de jogos entre estas seleções." });
         }
 
-        let vitTeam1 = 0;
-        let vitTeam2 = 0;
-        let empates = 0;
-        let golsTeam1 = 0;
-        let golsTeam2 = 0;
+        let vitTeam1 = 0, vitTeam2 = 0, empates = 0, golsTeam1 = 0, golsTeam2 = 0;
 
         h2hData.forEach(match => {
             const isTeam1Home = match.teams.home.id == team1_id;
@@ -1628,8 +1620,7 @@ app.get('/estatisticas/h2h', async (req, res) => {
             totalJogos: h2hData.length,
             time1: { vitorias: vitTeam1, gols: golsTeam1 },
             time2: { vitorias: vitTeam2, gols: golsTeam2 },
-            empates: empates,
-            ultimoJogo: h2hData[0] ? h2hData[0].fixture.date : null
+            empates: empates
         };
 
         res.status(200).json({ success: true, h2h });
