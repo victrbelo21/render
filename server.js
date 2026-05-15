@@ -1475,160 +1475,69 @@ app.post('/trade/confirm', async (req, res) => {
 });
 
 // =====================================================================
-// 8. ROTAS DE ESTATÍSTICAS (API-FOOTBALL / RAPIDAPI)
+// 8. ROTAS DE ESTATÍSTICAS (DIRETO DA API OFICIAL DA FIFA)
 // =====================================================================
 
-const API_FOOTBALL_KEY = 'f88a49f518a4c6e1482c88b70ec46dfe'; // Sua chave direta
-const API_FOOTBALL_HOST = 'v3.football.api-sports.io';
-const WORLD_CUP_LEAGUE_ID = 1; // ID oficial da Copa
-const SEASON_YEAR = 2026; // Voltamos para 2026!
-
-const fetchApiFootball = async (endpoint) => {
-    const url = `https://${API_FOOTBALL_HOST}/${endpoint}`;
-    const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-            'x-apisports-key': API_FOOTBALL_KEY
-        }
-    });
-    
-    if (!response.ok) throw new Error(`Erro API-Football: ${response.status}`);
-    const data = await response.json();
-    return data.response; // Ignoramos os "errors" da API pois quando o ano não existe, ela manda um array vazio sem erro fatal.
-};
-
-// 1. CLASSIFICAÇÃO (Tabela de Grupos)
+// 1. CLASSIFICAÇÃO (Tabela de Grupos - Oficial)
 app.get('/estatisticas/standings', async (req, res) => {
     try {
-        console.log('📊 Buscando tabela oficial na API-Football (2026)...');
-        const standingsData = await fetchApiFootball(`standings?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
+        console.log('📊 Buscando tabela oficial direto da API da FIFA...');
         
+        // A URL secreta que você descobriu!
+        const fifaUrl = 'https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=pt&count=200';
+        
+        const response = await fetch(fifaUrl);
+        if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
+        
+        const data = await response.json();
         const tabelaLimpa = {};
+        const resultados = data.Results || [];
 
-        // Se a API retornar grupos (quando o sorteio da FIFA sair)
-        if (standingsData && standingsData.length > 0 && standingsData[0].league.standings) {
-            standingsData[0].league.standings.forEach(grupoInfo => {
-                const nomeGrupoRaw = grupoInfo[0].group; 
-                const letraGrupo = nomeGrupoRaw.replace('Group ', '').trim();
+        if (resultados.length > 0) {
+            // O Backend "mastiga" o formato da FIFA e cospe no formato que o nosso Frontend já entende
+            resultados.forEach(item => {
+                // A FIFA costuma mandar o nome do grupo em "Group[0].Description"
+                const nomeGrupo = item.Group?.[0]?.Description || 'A';
+                const letraGrupo = nomeGrupo.replace('Grupo ', '').replace('Group ', '').trim();
                 
-                tabelaLimpa[letraGrupo] = grupoInfo.map(linha => ({
-                    posicao: linha.rank,
-                    time: linha.team.name,
-                    escudo: linha.team.logo, 
-                    pontos: linha.points,
-                    jogos: linha.all.played,
-                    vitorias: linha.all.win,
-                    empates: linha.all.draw,
-                    derrotas: linha.all.lose,
-                    golsPro: linha.all.goals.for,
-                    golsContra: linha.all.goals.against,
-                    saldo: linha.goalsDiff
-                }));
+                if (!tabelaLimpa[letraGrupo]) tabelaLimpa[letraGrupo] = [];
+                
+                tabelaLimpa[letraGrupo].push({
+                    posicao: item.Position,
+                    time: item.Team?.Name?.[0]?.Description || 'A definir',
+                    escudo: item.Team?.PictureUrl || `https://ui-avatars.com/api/?name=${item.Team?.IdCountry || 'FIFA'}&background=f2f4f8`,
+                    pontos: item.Points || 0,
+                    jogos: item.Played || 0,
+                    vitorias: item.Won || 0,
+                    empates: item.Drawn || 0,
+                    derrotas: item.Lost || 0,
+                    golsPro: item.GoalsFor || 0,
+                    golsContra: item.GoalsAgainst || 0,
+                    saldo: item.GoalDifference || 0
+                });
             });
+
+            // Ordena pela posição oficial da FIFA por segurança
+            for (const grupo in tabelaLimpa) {
+                tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
+            }
+
             res.status(200).json({ success: true, grupos: tabelaLimpa, status: 'ativo' });
         } else {
-            // Se a API retornar vazio (Grupos ainda não sorteados)
             res.status(200).json({ success: true, grupos: {}, status: 'aguardando_sorteio' });
         }
 
     } catch (error) {
-        console.error("❌ Erro ao buscar tabela na API-Football:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair classificação.' });
+        console.error("❌ Erro na API da FIFA:", error);
+        res.status(500).json({ success: false, error: 'Erro ao extrair classificação da FIFA.' });
     }
 });
 
-// 2. ELENCOS E DADOS DOS TIMES
-app.get('/estatisticas/elencos', async (req, res) => {
-    try {
-        console.log('📋 Buscando equipes na API-Football...');
-        const teamsData = await fetchApiFootball(`teams?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
-        
-        if (!teamsData || teamsData.length === 0) {
-            return res.status(200).json({ success: true, selecoes: [], status: 'aguardando_convocacoes' });
-        }
-
-        const elencosLimpos = teamsData.map(item => ({
-            id: item.team.id,
-            nome: item.team.name,
-            escudo: item.team.logo
-        }));
-
-        res.status(200).json({ success: true, selecoes: elencosLimpos, status: 'ativo' });
-    } catch (error) {
-        console.error("❌ Erro ao buscar elencos:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair equipes.' });
-    }
-});
-
-// 3. TOP ARTILHEIROS
-app.get('/estatisticas/artilheiros', async (req, res) => {
-    try {
-        console.log('⚽ Buscando artilheiros na API-Football...');
-        const scorersData = await fetchApiFootball(`players/topscorers?league=${WORLD_CUP_LEAGUE_ID}&season=${SEASON_YEAR}`);
-        
-        if (!scorersData || scorersData.length === 0) {
-            return res.status(200).json({ success: true, artilheiros: [], status: 'aguardando_gols' });
-        }
-
-        const artilheirosLimpos = scorersData.map(s => ({
-            nome: s.player.name,
-            foto: s.player.photo, 
-            time: s.statistics[0].team.name,
-            timeEscudo: s.statistics[0].team.logo,
-            gols: s.statistics[0].goals.total,
-            jogos: s.statistics[0].games.appearences
-        }));
-
-        res.status(200).json({ success: true, artilheiros: artilheirosLimpos, status: 'ativo' });
-    } catch (error) {
-        console.error("❌ Erro ao buscar artilharia:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair artilheiros.' });
-    }
-});
-
-// 4. HISTÓRICO DE CONFRONTOS (H2H)
-app.get('/estatisticas/h2h', async (req, res) => {
-    try {
-        const { team1_id, team2_id } = req.query;
-        if (!team1_id || !team2_id) {
-            return res.status(400).json({ success: false, error: "IDs das equipes não fornecidos." });
-        }
-
-        console.log(`⚔️ Buscando H2H para equipes ${team1_id} e ${team2_id}...`);
-        const h2hData = await fetchApiFootball(`fixtures/headtohead?h2h=${team1_id}-${team2_id}`);
-
-        if (!h2hData || h2hData.length === 0) {
-            return res.status(200).json({ success: true, h2h: null, message: "Sem histórico oficial de jogos entre estas seleções." });
-        }
-
-        let vitTeam1 = 0, vitTeam2 = 0, empates = 0, golsTeam1 = 0, golsTeam2 = 0;
-
-        h2hData.forEach(match => {
-            const isTeam1Home = match.teams.home.id == team1_id;
-            const goals1 = isTeam1Home ? match.goals.home : match.goals.away;
-            const goals2 = isTeam1Home ? match.goals.away : match.goals.home;
-            
-            golsTeam1 += goals1 || 0;
-            golsTeam2 += goals2 || 0;
-
-            if (goals1 > goals2) vitTeam1++;
-            else if (goals2 > goals1) vitTeam2++;
-            else empates++;
-        });
-
-        const h2h = {
-            totalJogos: h2hData.length,
-            time1: { vitorias: vitTeam1, gols: golsTeam1 },
-            time2: { vitorias: vitTeam2, gols: golsTeam2 },
-            empates: empates
-        };
-
-        res.status(200).json({ success: true, h2h });
-    } catch (error) {
-        console.error("❌ Erro ao buscar H2H:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair histórico.' });
-    }
-});
+// Como zeramos a API-Football, deixei as outras rotas "dormentes" por enquanto 
+// até você fazer o seu trabalho de detetive e achar as URLs da FIFA para elas também!
+app.get('/estatisticas/elencos', (req, res) => res.json({ success: true, status: 'aguardando_convocacoes' }));
+app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, status: 'aguardando_gols' }));
+app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
 
 // =====================================================================
 // 7. INICIALIZAÇÃO DO SERVIDOR
