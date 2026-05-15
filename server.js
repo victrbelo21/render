@@ -1621,7 +1621,7 @@ app.get('/estatisticas/elencos', async (req, res) => {
                         nascimento: nascimento,
                         camisa: camisaNum,
                         // A MÁGICA ACONTECE AQUI: Adicionamos o ${imgVersion} na URL
-                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/${imgVersion}Athletes/${atleta.id}`
+                        foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/${imgVersion}Athletes/NationalTeam/${atleta.id}`
                     });
 
                     if (pos === "Treinador") treinadorEncontrado = true;
