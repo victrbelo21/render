@@ -1570,15 +1570,12 @@ app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
 
-        // Se não mandar teamId, a gente ainda não puxa ninguem. 
-        // No futuro, a gente pode fazer o frontend pedir a lista completa de IDs de times.
         if (!teamId) {
              return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
         }
 
         console.log(`👕 Buscando elenco do time ${teamId} no 365Scores...`);
         
-        // A URL mágica que você encontrou, agora dinâmica!
         const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
         
         const response = await fetch(scoresUrl);
@@ -1586,22 +1583,48 @@ app.get('/estatisticas/elencos', async (req, res) => {
         
         const data = await response.json();
         
-        // Vamos extrair os dados mastigados. 
-        // O 365Scores manda a lista de jogadores dentro de squads[0].members
         const elenco = [];
-        if (data.squads && data.squads.length > 0 && data.squads[0].members) {
-             data.squads[0].members.forEach(m => {
-                 // A API manda a data de nascimento completa. Vamos pegar só o ano.
-                 const nascimento = m.dateOfBirth ? m.dateOfBirth.split('-')[0] : '-';
-                 
-                 elenco.push({
-                     nome: m.name,
-                     // O 365Scores manda o tipo do jogador em 'type'. 1 costuma ser goleiro, 2 defesa, 3 meio, 4 ataque, 5 tecnico.
-                     posicao: mapPosicao(m.type), 
-                     nascimento: nascimento,
-                     camisa: m.jerseyNumber || '-',
-                     foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${m.id}`
-                 });
+        let treinadorEncontrado = false;
+
+        // O 365Scores pode colocar a lista em data.competitors ou aninhado em squads
+        // Vamos varrer o objeto competitors principal (como visto no seu print)
+        if (data.competitors && Array.isArray(data.competitors)) {
+            // A API envia o time principal (Brasil) e depois os times onde os jogadores jogam (PSG, etc)
+            // Vamos iterar sobre data.squads para pegar os membros reais atrelados ao timeId
+            if (data.squads && data.squads.length > 0) {
+                // Procura o squad que pertence ao teamId solicitado
+                const squadDoTime = data.squads.find(s => s.competitorId == teamId);
+                
+                if (squadDoTime && squadDoTime.members) {
+                    squadDoTime.members.forEach(m => {
+                        const nascimento = m.dateOfBirth ? m.dateOfBirth.split('-')[0] : '-';
+                        const pos = mapPosicao(m.type);
+                        
+                        elenco.push({
+                            nome: m.name,
+                            posicao: pos, 
+                            nascimento: nascimento,
+                            camisa: m.jerseyNumber || '-',
+                            // Usa o template de imagem do 365Scores
+                            foto: `https://imagecache.365scores.com/image/upload/f_auto,w_72,h_72,c_limit,q_auto:eco/Athletes/Player_${m.id}`
+                        });
+
+                        if (pos === "Treinador") treinadorEncontrado = true;
+                    });
+                }
+            }
+        }
+
+        // Se o 365Scores não enviou o treinador (o que acontece frequentemente na API gratuita deles fora de época de torneio)
+        // Nós inserimos um "Treinador Genérico" apenas para o frontend não bugar, ou deixamos a responsabilidade para o front
+        if (!treinadorEncontrado && elenco.length > 0) {
+             console.log(`⚠️ Treinador não listado pela API para o time ${teamId}. Inserindo placeholder.`);
+             elenco.push({
+                 nome: "Técnico Oficial",
+                 posicao: "Treinador",
+                 nascimento: "-",
+                 camisa: "-",
+                 foto: `https://ui-avatars.com/api/?name=Treinador&background=f2f4f8`
              });
         }
 
