@@ -629,11 +629,11 @@ app.post('/buscar-cartela', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
     
     // --- HIGIENIZAÇÃO DO BACKEND ---
-    // Limpa sumariamente os IDs fantasmas (> 81) que ficaram salvos no banco antigo
-    if (existingDoc && existingDoc.album) {
-        existingDoc.album.coladas = (existingDoc.album.coladas || []).filter(id => id >= 1 && id <= 81);
-        existingDoc.album.repetidas = (existingDoc.album.repetidas || []).filter(id => id >= 1 && id <= 81);
-    }
+    // Atualizado para o limite de 88 figurinhas
+    if (existingDoc && existingDoc.album) {
+        existingDoc.album.coladas = (existingDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
+        existingDoc.album.repetidas = (existingDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
+    }
     
     res.status(200).json({ 
         success: true, 
@@ -749,17 +749,17 @@ app.post('/abrir-pacote', async (req, res) => {
             const chance = Math.random() * 100;
             let figurinhaSorteada;
 
-            // --- CORREÇÃO MATEMÁTICA DO SORTEIO (Travado em 81) ---
-            if (chance < 5) {
-                // Cartas mais raras do fim do álbum (77 a 81)
-                figurinhaSorteada = Math.floor(Math.random() * (81 - 77 + 1)) + 77;
-            } else if (chance < 25) {
-                // Cartas intermediárias (61 a 76)
-                figurinhaSorteada = Math.floor(Math.random() * (76 - 61 + 1)) + 61;
-            } else {
-                // Cartas comuns (1 a 60)
-                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
-            }
+            // --- CORREÇÃO MATEMÁTICA DO SORTEIO (Expandido para 88) ---
+            if (chance < 5) {
+                // Cartas mais raras do fim do álbum (77 a 88)
+                figurinhaSorteada = Math.floor(Math.random() * (88 - 77 + 1)) + 77;
+            } else if (chance < 25) {
+                // Cartas intermediárias (61 a 76)
+                figurinhaSorteada = Math.floor(Math.random() * (76 - 61 + 1)) + 61;
+            } else {
+                // Cartas comuns (1 a 60)
+                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
+            }
             figurinhasSorteadas.push(figurinhaSorteada);
         }
 
