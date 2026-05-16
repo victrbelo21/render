@@ -629,11 +629,10 @@ app.post('/buscar-cartela', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
     
     // --- HIGIENIZAÇÃO DO BACKEND ---
-    // Atualizado para o limite de 88 figurinhas
-    if (existingDoc && existingDoc.album) {
-        existingDoc.album.coladas = (existingDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
-        existingDoc.album.repetidas = (existingDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
-    }
+    if (existingDoc && existingDoc.album) {
+        existingDoc.album.coladas = (existingDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
+        existingDoc.album.repetidas = (existingDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
+    }
     
     res.status(200).json({ 
         success: true, 
@@ -724,8 +723,6 @@ app.post('/abrir-pacote', async (req, res) => {
             userDoc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
         }
 
-        // --- HIGIENIZAÇÃO PERMANENTE ANTES DE SALVAR ---
-        // Garante que o banco seja limpo de vez na próxima interação do usuário
         userDoc.album.coladas = (userDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
         userDoc.album.repetidas = (userDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
 
@@ -749,17 +746,13 @@ app.post('/abrir-pacote', async (req, res) => {
             const chance = Math.random() * 100;
             let figurinhaSorteada;
 
-            // --- CORREÇÃO MATEMÁTICA DO SORTEIO (Expandido para 88) ---
-            if (chance < 5) {
-                // Cartas mais raras do fim do álbum (77 a 88)
-                figurinhaSorteada = Math.floor(Math.random() * (88 - 77 + 1)) + 77;
-            } else if (chance < 25) {
-                // Cartas intermediárias (61 a 76)
-                figurinhaSorteada = Math.floor(Math.random() * (76 - 61 + 1)) + 61;
-            } else {
-                // Cartas comuns (1 a 60)
-                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
-            }
+            if (chance < 5) {
+                figurinhaSorteada = Math.floor(Math.random() * (88 - 77 + 1)) + 77;
+            } else if (chance < 25) {
+                figurinhaSorteada = Math.floor(Math.random() * (76 - 61 + 1)) + 61;
+            } else {
+                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
+            }
             figurinhasSorteadas.push(figurinhaSorteada);
         }
 
@@ -895,7 +888,6 @@ app.post('/forum/new-thread', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, error: 'Erro ao criar discussão no banco' }); }
 });
 
-// --- RESPONDER TÓPICO OU COMENTÁRIO (Suporta 3 níveis) ---
 app.post('/forum/reply', async (req, res) => {
     try {
         const { thread_id, parent_msg_id, author_name, author_email, text } = req.body;
@@ -910,27 +902,23 @@ app.post('/forum/reply', async (req, res) => {
         };
 
         if (parent_msg_id) {
-            // É uma resposta a um comentário específico
             const parent = doc.messages.find(m => m.id === parent_msg_id);
             if (parent) {
                 if (!parent.replies) parent.replies = [];
                 parent.replies.push(novaMensagem);
             }
         } else {
-            // É um comentário direto na discussão
             if (!doc.messages) doc.messages = [];
-            // Adiciona a propriedade replies vazia também nos comentários principais
             novaMensagem.replies = []; 
             doc.messages.push(novaMensagem);
         }
 
-        doc.created_at = new Date().toISOString(); // Bump up do tópico
+        doc.created_at = new Date().toISOString();
         await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
         res.status(200).json({ success: true });
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- CURTIR (Suporta Comentários e Respostas Aninhadas) ---
 app.post('/forum/message/like', async (req, res) => {
     try {
         const { thread_id, msg_id, reply_id, user_email } = req.body;
@@ -956,7 +944,6 @@ app.post('/forum/message/like', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- EXCLUIR TÓPICO INTEIRO ---
 app.post('/forum/delete', async (req, res) => {
     try {
         const { thread_id, user_email } = req.body;
@@ -969,7 +956,6 @@ app.post('/forum/delete', async (req, res) => {
     } catch(e) { res.status(500).json({ success: false }); }
 });
 
-// --- EXCLUIR COMENTÁRIO OU RESPOSTA ---
 app.post('/forum/message/delete', async (req, res) => {
     try {
         const { thread_id, msg_id, reply_id, user_email } = req.body;
@@ -987,8 +973,6 @@ app.post('/forum/message/delete', async (req, res) => {
             }
         } else {
             const msgIndex = doc.messages.findIndex(m => m.id === msg_id);
-            // Importante: garante que não está apagando o index 0 se não quiser que quebre a thread, 
-            // mas o front-end manda pra /forum/delete se for a msg principal.
             if (msgIndex > -1 && doc.messages[msgIndex].author_email === user_email) {
                 doc.messages.splice(msgIndex, 1);
                 await cloudant.putDocument({ db: DB_NAME, docId: doc._id, document: doc });
@@ -1060,144 +1044,63 @@ function ordenarTrocasMaisRecentes(a, b) {
     return dataB - dataA;
 }
 
-// Jogador 1 propõe uma figurinha para o Jogador 2
 app.post('/trade/propose', async (req, res) => {
     try {
-        const {
-            proponente_email,
-            proponente_nome,
-            parceiro_email,
-            parceiro_nome,
-            fig_id
-        } = req.body;
-
+        const { proponente_email, proponente_nome, parceiro_email, parceiro_nome, fig_id } = req.body;
         const proponenteFigId = parseInt(fig_id, 10);
 
-        if (!proponente_email || !parceiro_email || !proponenteFigId) {
-            return res.status(400).json({
-                success: false,
-                error: "Dados incompletos para criar a proposta."
-            });
-        }
-
-        if (proponente_email === parceiro_email) {
-            return res.status(400).json({
-                success: false,
-                error: "Você não pode propor troca com você mesmo."
-            });
-        }
+        if (!proponente_email || !parceiro_email || !proponenteFigId) return res.status(400).json({ success: false, error: "Dados incompletos." });
+        if (proponente_email === parceiro_email) return res.status(400).json({ success: false, error: "Troca inválida." });
 
         const docProponente = await buscarCartelaUsuario(proponente_email);
         const docParceiro = await buscarCartelaUsuario(parceiro_email);
 
-        if (!docProponente || !docParceiro) {
-            return res.status(404).json({
-                success: false,
-                error: "Não foi possível encontrar a cartela de um dos jogadores."
-            });
-        }
+        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: "Cartela não encontrada." });
 
         garantirAlbumValido(docProponente);
         garantirAlbumValido(docParceiro);
 
-        if (!possuiRepetida(docProponente, proponenteFigId)) {
-            return res.status(400).json({
-                success: false,
-                error: "Você não tem mais essa figurinha repetida para oferecer."
-            });
-        }
+        if (!possuiRepetida(docProponente, proponenteFigId)) return res.status(400).json({ success: false, error: "Figurinha indisponível." });
 
         const buscaDuplicada = await cloudant.postFind({
             db: DB_NAME,
             selector: {
-                type: "proposta_troca",
-                proponente_email,
-                parceiro_email,
-                proponente_fig_id: proponenteFigId,
-                status: {
-                    "$in": ["aguardando_contraoferta", "aguardando_confirmacao"]
-                }
+                type: "proposta_troca", proponente_email, parceiro_email, proponente_fig_id: proponenteFigId,
+                status: { "$in": ["aguardando_contraoferta", "aguardando_confirmacao"] }
             }
         });
 
-        if (buscaDuplicada.result.docs.length > 0) {
-            return res.status(400).json({
-                success: false,
-                error: "Você já tem uma proposta aberta com essa figurinha para este colega."
-            });
-        }
+        if (buscaDuplicada.result.docs.length > 0) return res.status(400).json({ success: false, error: "Proposta já existente." });
 
         const agora = new Date().toISOString();
-
         const proposta = {
-            type: "proposta_troca",
-            proponente_email,
-            proponente_nome,
-            parceiro_email,
-            parceiro_nome,
-            proponente_fig_id: proponenteFigId,
-            parceiro_fig_id: null,
-
-            // Compatibilidade com telas antigas que ainda leem fig_id
-            fig_id: proponenteFigId,
-
-            proponente_wishlist_snapshot: docProponente.wishlist || [],
-            parceiro_wishlist_snapshot: docParceiro.wishlist || [],
-
-            status: "aguardando_contraoferta",
-            created_at: agora,
-            updated_at: agora
+            type: "proposta_troca", proponente_email, proponente_nome, parceiro_email, parceiro_nome,
+            proponente_fig_id: proponenteFigId, parceiro_fig_id: null, fig_id: proponenteFigId,
+            proponente_wishlist_snapshot: docProponente.wishlist || [], parceiro_wishlist_snapshot: docParceiro.wishlist || [],
+            status: "aguardando_contraoferta", created_at: agora, updated_at: agora
         };
 
-        await cloudant.postDocument({
-            db: DB_NAME,
-            document: proposta
-        });
-
-        res.status(200).json({
-            success: true,
-            message: "Oferta enviada. Agora aguarde a contraoferta do colega."
-        });
-    } catch (error) {
-        console.error("Erro ao propor troca:", error);
-        res.status(500).json({
-            success: false,
-            error: "Erro ao registrar proposta no Cloudant."
-        });
-    }
+        await cloudant.postDocument({ db: DB_NAME, document: proposta });
+        res.status(200).json({ success: true, message: "Oferta enviada." });
+    } catch (error) { res.status(500).json({ success: false, error: "Erro ao registrar proposta." }); }
 });
 
-// Buscar trocas abertas do usuário
 app.post('/trade/inbox', async (req, res) => {
     try {
         const { user_email } = req.body;
-
-        if (!user_email) {
-            return res.status(400).json({
-                success: false,
-                error: "Usuário não informado."
-            });
-        }
+        if (!user_email) return res.status(400).json({ success: false, error: "Usuário não informado." });
 
         const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
 
         const sent = await cloudant.postFind({
             db: DB_NAME,
-            selector: {
-                type: "proposta_troca",
-                proponente_email: user_email,
-                status: { "$in": statusAbertos }
-            },
+            selector: { type: "proposta_troca", proponente_email: user_email, status: { "$in": statusAbertos } },
             limit: 100
         });
 
         const received = await cloudant.postFind({
             db: DB_NAME,
-            selector: {
-                type: "proposta_troca",
-                parceiro_email: user_email,
-                status: { "$in": statusAbertos }
-            },
+            selector: { type: "proposta_troca", parceiro_email: user_email, status: { "$in": statusAbertos } },
             limit: 100
         });
 
@@ -1206,247 +1109,85 @@ app.post('/trade/inbox', async (req, res) => {
             enviadas: sent.result.docs.sort(ordenarTrocasMaisRecentes),
             recebidas: received.result.docs.sort(ordenarTrocasMaisRecentes)
         });
-    } catch (error) {
-        console.error("Erro ao buscar inbox de trocas:", error);
-        res.status(500).json({
-            success: false,
-            error: "Erro ao buscar propostas de troca."
-        });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: "Erro ao buscar propostas." }); }
 });
 
-// Jogador 2 responde: recusa ou envia uma figurinha dele como contraoferta
 app.post('/trade/respond', async (req, res) => {
     try {
-        const {
-            proposta_id,
-            acao,
-            user_email,
-            minha_fig_id
-        } = req.body;
+        const { proposta_id, acao, user_email, minha_fig_id } = req.body;
+        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
 
-        if (!proposta_id || !acao) {
-            return res.status(400).json({
-                success: false,
-                error: "Dados incompletos para responder a troca."
-            });
-        }
-
-        const proposta = (await cloudant.getDocument({
-            db: DB_NAME,
-            docId: proposta_id
-        })).result;
-
+        const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
         const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
 
-        if (!statusAbertos.includes(proposta.status)) {
-            return res.status(400).json({
-                success: false,
-                error: "Esta proposta não está mais disponível."
-            });
-        }
+        if (!statusAbertos.includes(proposta.status)) return res.status(400).json({ success: false, error: "Proposta não disponível." });
 
         if (acao === "recusar" || acao === "cancelar") {
             proposta.status = acao === "cancelar" ? "cancelada" : "recusada";
             proposta.updated_at = new Date().toISOString();
-
-            await cloudant.putDocument({
-                db: DB_NAME,
-                docId: proposta_id,
-                document: proposta
-            });
-
-            return res.json({
-                success: true,
-                message: acao === "cancelar" ? "Proposta cancelada." : "Proposta recusada."
-            });
+            await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
+            return res.json({ success: true, message: "Proposta atualizada." });
         }
 
-        if (acao !== "contraofertar") {
-            return res.status(400).json({
-                success: false,
-                error: "Ação inválida para resposta de troca."
-            });
-        }
-
-        if (proposta.status !== "aguardando_contraoferta") {
-            return res.status(400).json({
-                success: false,
-                error: "Esta troca já recebeu uma contraoferta."
-            });
-        }
-
-        if (user_email && user_email !== proposta.parceiro_email) {
-            return res.status(403).json({
-                success: false,
-                error: "Apenas o parceiro pode contraofertar nesta troca."
-            });
-        }
+        if (acao !== "contraofertar") return res.status(400).json({ success: false, error: "Ação inválida." });
+        if (proposta.status !== "aguardando_contraoferta") return res.status(400).json({ success: false, error: "Já contraofertada." });
+        if (user_email && user_email !== proposta.parceiro_email) return res.status(403).json({ success: false, error: "Acesso negado." });
 
         const parceiroFigId = parseInt(minha_fig_id, 10);
-
-        if (!parceiroFigId) {
-            return res.status(400).json({
-                success: false,
-                error: "Escolha uma figurinha repetida para contraofertar."
-            });
-        }
+        if (!parceiroFigId) return res.status(400).json({ success: false, error: "Figurinha inválida." });
 
         const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
-
-        if (!docParceiro) {
-            return res.status(404).json({
-                success: false,
-                error: "Cartela do parceiro não encontrada."
-            });
-        }
-
-        if (!possuiRepetida(docParceiro, parceiroFigId)) {
-            return res.status(400).json({
-                success: false,
-                error: "Você não tem mais essa figurinha repetida para contraofertar."
-            });
-        }
+        if (!docParceiro || !possuiRepetida(docParceiro, parceiroFigId)) return res.status(400).json({ success: false, error: "Figurinha indisponível." });
 
         proposta.parceiro_fig_id = parceiroFigId;
         proposta.status = "aguardando_confirmacao";
         proposta.updated_at = new Date().toISOString();
 
-        await cloudant.putDocument({
-            db: DB_NAME,
-            docId: proposta_id,
-            document: proposta
-        });
-
-        res.json({
-            success: true,
-            message: "Contraoferta enviada. Agora aguarde a confirmação do proponente."
-        });
-    } catch (error) {
-        console.error("Erro ao responder troca:", error);
-        res.status(500).json({
-            success: false,
-            error: "Falha ao responder a proposta de troca."
-        });
-    }
+        await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
+        res.json({ success: true, message: "Contraoferta enviada." });
+    } catch (error) { res.status(500).json({ success: false, error: "Falha ao responder." }); }
 });
 
-// Jogador 1 confirma a troca completa e só aqui as cartelas são alteradas
 app.post('/trade/confirm', async (req, res) => {
     try {
-        const {
-            proposta_id,
-            user_email,
-            acao
-        } = req.body;
+        const { proposta_id, user_email, acao } = req.body;
+        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
 
-        if (!proposta_id || !acao) {
-            return res.status(400).json({
-                success: false,
-                error: "Dados incompletos para confirmar a troca."
-            });
-        }
-
-        const proposta = (await cloudant.getDocument({
-            db: DB_NAME,
-            docId: proposta_id
-        })).result;
-
-        if (user_email && user_email !== proposta.proponente_email) {
-            return res.status(403).json({
-                success: false,
-                error: "Apenas o proponente pode confirmar esta troca."
-            });
-        }
-
-        if (proposta.status !== "aguardando_confirmacao") {
-            return res.status(400).json({
-                success: false,
-                error: "Esta troca ainda não está pronta para confirmação."
-            });
-        }
+        const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
+        if (user_email && user_email !== proposta.proponente_email) return res.status(403).json({ success: false, error: "Acesso negado." });
+        if (proposta.status !== "aguardando_confirmacao") return res.status(400).json({ success: false, error: "Confirmação indisponível." });
 
         if (acao === "recusar" || acao === "cancelar") {
             proposta.status = acao === "cancelar" ? "cancelada" : "recusada_pelo_proponente";
             proposta.updated_at = new Date().toISOString();
-
-            await cloudant.putDocument({
-                db: DB_NAME,
-                docId: proposta_id,
-                document: proposta
-            });
-
-            return res.json({
-                success: true,
-                message: "Troca encerrada sem movimentar figurinhas."
-            });
+            await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
+            return res.json({ success: true, message: "Troca encerrada." });
         }
 
-        if (acao !== "confirmar") {
-            return res.status(400).json({
-                success: false,
-                error: "Ação inválida para confirmação de troca."
-            });
-        }
+        if (acao !== "confirmar") return res.status(400).json({ success: false, error: "Ação inválida." });
 
         const proponenteFigId = parseInt(proposta.proponente_fig_id || proposta.fig_id, 10);
         const parceiroFigId = parseInt(proposta.parceiro_fig_id, 10);
 
-        if (!proponenteFigId || !parceiroFigId) {
-            return res.status(400).json({
-                success: false,
-                error: "A troca está incompleta."
-            });
-        }
+        if (!proponenteFigId || !parceiroFigId) return res.status(400).json({ success: false, error: "Troca incompleta." });
 
         const docProponente = await buscarCartelaUsuario(proposta.proponente_email);
         const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
 
-        if (!docProponente || !docParceiro) {
-            return res.status(404).json({
-                success: false,
-                error: "Não foi possível encontrar uma das cartelas."
-            });
-        }
+        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: "Cartelas não encontradas." });
 
         garantirAlbumValido(docProponente);
         garantirAlbumValido(docParceiro);
 
-        if (!possuiRepetida(docProponente, proponenteFigId)) {
+        if (!possuiRepetida(docProponente, proponenteFigId) || !possuiRepetida(docParceiro, parceiroFigId)) {
             proposta.status = "expirada";
             proposta.updated_at = new Date().toISOString();
-
-            await cloudant.putDocument({
-                db: DB_NAME,
-                docId: proposta_id,
-                document: proposta
-            });
-
-            return res.status(400).json({
-                success: false,
-                error: "O proponente não tem mais a figurinha oferecida."
-            });
-        }
-
-        if (!possuiRepetida(docParceiro, parceiroFigId)) {
-            proposta.status = "expirada";
-            proposta.updated_at = new Date().toISOString();
-
-            await cloudant.putDocument({
-                db: DB_NAME,
-                docId: proposta_id,
-                document: proposta
-            });
-
-            return res.status(400).json({
-                success: false,
-                error: "O parceiro não tem mais a figurinha contraofertada."
-            });
+            await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
+            return res.status(400).json({ success: false, error: "Figurinha(s) não disponível(is)." });
         }
 
         removerUmaRepetida(docProponente, proponenteFigId);
         removerUmaRepetida(docParceiro, parceiroFigId);
-
         adicionarFigurinhaAoAlbum(docProponente, parceiroFigId);
         adicionarFigurinhaAoAlbum(docParceiro, proponenteFigId);
 
@@ -1454,38 +1195,19 @@ app.post('/trade/confirm', async (req, res) => {
         proposta.updated_at = new Date().toISOString();
         proposta.confirmed_at = new Date().toISOString();
 
-        await cloudant.postBulkDocs({
-            db: DB_NAME,
-            bulkDocs: {
-                docs: [docProponente, docParceiro, proposta]
-            }
-        });
-
-        res.json({
-            success: true,
-            message: "Troca confirmada e cartelas atualizadas!"
-        });
-    } catch (error) {
-        console.error("Erro ao confirmar troca:", error);
-        res.status(500).json({
-            success: false,
-            error: "Falha na confirmação da troca."
-        });
-    }
+        await cloudant.postBulkDocs({ db: DB_NAME, bulkDocs: { docs: [docProponente, docParceiro, proposta] } });
+        res.json({ success: true, message: "Troca confirmada!" });
+    } catch (error) { res.status(500).json({ success: false, error: "Falha ao confirmar." }); }
 });
 
 // =====================================================================
-// 8. ROTAS DE ESTATÍSTICAS (DIRETO DA API OFICIAL DA FIFA)
+// 8. ROTAS DE ESTATÍSTICAS (DIRETO DA API OFICIAL DA FIFA & 365SCORES)
 // =====================================================================
 
-// 1. CLASSIFICAÇÃO (Tabela de Grupos - Oficial)
 app.get('/estatisticas/standings', async (req, res) => {
     try {
         console.log('📊 Buscando tabela oficial direto da API da FIFA...');
-        
-        // A URL secreta que você descobriu!
         const fifaUrl = 'https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=pt&count=200';
-        
         const response = await fetch(fifaUrl);
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
         
@@ -1494,93 +1216,57 @@ app.get('/estatisticas/standings', async (req, res) => {
         const resultados = data.Results || [];
 
         if (resultados.length > 0) {
-            // O Backend "mastiga" o formato da FIFA e cospe no formato que o nosso Frontend já entende
             resultados.forEach(item => {
-                // A FIFA costuma mandar o nome do grupo em "Group[0].Description"
                 const nomeGrupo = item.Group?.[0]?.Description || 'A';
                 const letraGrupo = nomeGrupo.replace('Grupo ', '').replace('Group ', '').trim();
-                
                 if (!tabelaLimpa[letraGrupo]) tabelaLimpa[letraGrupo] = [];
                 
                 tabelaLimpa[letraGrupo].push({
-                    posicao: item.Position,
-                    time: item.Team?.Name?.[0]?.Description || 'A definir',
+                    posicao: item.Position, time: item.Team?.Name?.[0]?.Description || 'A definir',
                     escudo: item.Team?.PictureUrl || `https://ui-avatars.com/api/?name=${item.Team?.IdCountry || 'FIFA'}&background=f2f4f8`,
-                    pontos: item.Points || 0,
-                    jogos: item.Played || 0,
-                    vitorias: item.Won || 0,
-                    empates: item.Drawn || 0,
-                    derrotas: item.Lost || 0,
-                    golsPro: item.GoalsFor || 0,
-                    golsContra: item.GoalsAgainst || 0,
-                    saldo: item.GoalDifference || 0
+                    pontos: item.Points || 0, jogos: item.Played || 0, vitorias: item.Won || 0,
+                    empates: item.Drawn || 0, derrotas: item.Lost || 0, golsPro: item.GoalsFor || 0,
+                    golsContra: item.GoalsAgainst || 0, saldo: item.GoalDifference || 0
                 });
             });
 
-            // Ordena pela posição oficial da FIFA por segurança
-            for (const grupo in tabelaLimpa) {
-                tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
-            }
-
+            for (const grupo in tabelaLimpa) tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
             res.status(200).json({ success: true, grupos: tabelaLimpa, status: 'ativo' });
         } else {
             res.status(200).json({ success: true, grupos: {}, status: 'aguardando_sorteio' });
         }
-
-    } catch (error) {
-        console.error("❌ Erro na API da FIFA:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair classificação da FIFA.' });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair classificação da FIFA.' }); }
 });
 
-// 5. CHAVEAMENTO (Mata-Mata - Oficial FIFA)
 app.get('/estatisticas/chaveamento', async (req, res) => {
     try {
         console.log('🌳 Buscando árvore do mata-mata na API da FIFA...');
-        
         const fifaStagesUrl = 'https://api.fifa.com/api/v3/stages?idSeason=285023&language=pt';
         const response = await fetch(fifaStagesUrl);
-        
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
         
         const data = await response.json();
-        
-        // A API da FIFA pode retornar os dados dentro de 'Results' ou direto no array
         const stages = data.Results || (Array.isArray(data) ? data : []);
 
         if (stages.length > 0) {
-            // Filtra para pegar apenas as fases de mata-mata (normalmente a Fase de Grupos não é eliminatória)
-            // A FIFA costuma usar propriedades como 'IsGroupStage' = false ou nomes específicos
             const fasesEliminatorias = stages.filter(fase => !fase.IsGroupStage || fase.Name?.[0]?.Description?.toLowerCase().includes('final'));
-            
             res.status(200).json({ success: true, fases: fasesEliminatorias, status: 'ativo' });
         } else {
-            // Se a FIFA retornar vazio (muito comum anos antes do torneio)
             res.status(200).json({ success: true, fases: [], status: 'aguardando_fase_grupos' });
         }
-
-    } catch (error) {
-        console.error("❌ Erro na API da FIFA (Chaveamento):", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair o chaveamento da FIFA.' });
-    }
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair o chaveamento.' }); }
 });
 
-// 2. ELENCOS (Squads via 365Scores - Formato 2026)
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
-
-        if (!teamId) {
-             return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
-        }
+        if (!teamId) return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
 
         console.log(`👕 Buscando elenco do time ${teamId} no 365Scores...`);
-        
         const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
-        
         const response = await fetch(scoresUrl);
-        if (!response.ok) throw new Error(`O 365Scores bloqueou com status: ${response.status}`);
         
+        if (!response.ok) throw new Error(`O 365Scores bloqueou com status: ${response.status}`);
         const data = await response.json();
         
         const elenco = [];
@@ -1588,39 +1274,25 @@ app.get('/estatisticas/elencos', async (req, res) => {
 
         if (data.squads && data.squads.length > 0) {
             const squadDoTime = data.squads.find(s => s.competitorId == teamId) || data.squads[0];
-            
-            // O novo formato traz os jogadores diretamente dentro de squadDoTime.athletes
             if (squadDoTime && squadDoTime.athletes) {
-                
                 squadDoTime.athletes.forEach(atleta => {
                     const nascimento = atleta.birthdate ? atleta.birthdate.split('-')[0] : '-';
-                    
-                    // Identifica se é Treinador/Staff ou Jogador.
-                    // O 365Scores manda um position.id = 0 ou position.isStaff = true para o técnico.
                     let pos = "Indefinido";
+                    
                     if (atleta.position) {
-                        if (atleta.position.isStaff || atleta.position.id === 0) {
-                            pos = "Treinador";
-                        } else {
-                            // Se tiver outras posições listadas lá dentro, o mapPosicao resolve.
-                            // Mas se a API não mandar o ID da posição do jogador de linha claramente,
-                            // nós garantimos um fallback.
-                            pos = mapPosicao(atleta.position.id) || atleta.position.name || "Jogador de Linha";
-                        }
+                        if (atleta.position.isStaff || atleta.position.id === 0) pos = "Treinador";
+                        else pos = mapPosicao(atleta.position.id) || atleta.position.name || "Jogador de Linha";
                     }
 
-                    // Alguns jogadores podem vir sem o "jerseyNum" ou como -1
                     const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
-                    
-                    // Pega a versão da imagem se existir
                     const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
 
                     elenco.push({
+                        id: atleta.id, // Adicionado para uso posterior no Modal de Perfil
                         nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
                         posicao: pos, 
                         nascimento: nascimento,
                         camisa: camisaNum,
-                        // URL TURBINADA: Foco no rosto (g_face), zoom (z_0.65) e corte redondo (r_max)
                         foto: `https://imagecache.365scores.com/image/upload/f_png,w_80,h_80,c_limit,q_auto:eco,dpr_2,d_Athletes:${atleta.id}.png,r_max,c_thumb,g_face,z_0.65/${imgVersion}Athletes/NationalTeam/${atleta.id}`
                     });
 
@@ -1629,40 +1301,53 @@ app.get('/estatisticas/elencos', async (req, res) => {
             }
         }
 
-        // Se o 365Scores não mandar o técnico
         if (!treinadorEncontrado && elenco.length > 0) {
              elenco.push({
-                 nome: "Não informado oficialmente",
-                 posicao: "Treinador",
-                 nascimento: "-",
-                 camisa: "-",
+                 nome: "Não informado oficialmente", posicao: "Treinador", nascimento: "-", camisa: "-",
                  foto: `https://ui-avatars.com/api/?name=Treinador&background=f2f4f8`
              });
         }
 
-        res.status(200).json({ 
-            success: true, 
-            status: 'ativo', 
-            elenco: elenco 
-        });
-
-    } catch (error) {
-        console.error("❌ Erro na API do 365Scores:", error);
-        res.status(500).json({ success: false, error: 'Erro ao extrair elenco.' });
-    }
+        res.status(200).json({ success: true, status: 'ativo', elenco: elenco });
+    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair elenco.' }); }
 });
 
-// Funçãosinha auxiliar pra traduzir o ID de posição do 365Scores pro nosso português
 function mapPosicao(typeId) {
-    const posicoes = {
-        1: "Goleiro",
-        2: "Defensor",
-        3: "Meio-campo",
-        4: "Atacante",
-        5: "Treinador"
-    };
+    const posicoes = { 1: "Goleiro", 2: "Defensor", 3: "Meio-campo", 4: "Atacante", 5: "Treinador" };
     return posicoes[typeId] || "Indefinido";
 }
+
+// 6. PERFIL DO JOGADOR (Proxy 365Scores para Perfil)
+app.get('/estatisticas/jogador', async (req, res) => {
+    try {
+        const playerId = req.query.id;
+        if (!playerId) {
+             return res.status(400).json({ success: false, error: 'ID do jogador não informado' });
+        }
+
+        console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
+        
+        // Acesso direto ao endpoint agregado que a nossa investigação do F12 descobriu
+        const url = `https://webws.365scores.com/web/player/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&playerId=${playerId}`;
+        
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "accept": "application/json"
+            }
+        });
+
+        if (!response.ok) throw new Error(`Status HTTP: ${response.status}`);
+        
+        // Repassa a estrutura integral e original para o front-end "mastigar" 
+        const data = await response.json();
+        res.status(200).json(data);
+
+    } catch (error) {
+        console.error("❌ Erro ao buscar jogador:", error);
+        res.status(500).json({ success: false, error: 'Erro de comunicação com provedor estatístico' });
+    }
+});
 
 app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, status: 'aguardando_gols' }));
 app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
