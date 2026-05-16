@@ -1332,9 +1332,9 @@ app.get('/estatisticas/jogador', async (req, res) => {
         
         let data = await response.json();
         
-        // SALVA OS JOGOS E CLUBES NO BOLSO ANTES DE REFAZER O REQUEST
-        const gamesMaster = data.games || [];
-        const competitorsMaster = data.competitors || [];
+        // Garante que o array exista
+        if (!data.competitors) data.competitors = [];
+        if (!data.games) data.games = [];
 
         if (data && data.competitions && data.competitions.length > 0) {
             const compIds = data.competitions.map(c => c.id).join(',');
@@ -1343,16 +1343,28 @@ app.get('/estatisticas/jogador', async (req, res) => {
             const statsResponse = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
             if (statsResponse.ok) {
                 const statsData = await statsResponse.json(); 
-                // MERGE SEGURO: Atualiza só as estatísticas
+                
+                // 1. Atualiza as estatísticas avançadas
                 if (statsData.athletes && statsData.athletes[0]) {
                     data.athletes[0].highlightStats = statsData.athletes[0].highlightStats;
                 }
+                
+                // 2. AQUI ESTÁ A MÁGICA DOS JOGOS: Pega a lista de partidas do Request 2
+                if (statsData.games && statsData.games.length > 0) {
+                    data.games = statsData.games;
+                }
+                
+                // 3. Pega os adversários (pra renderizar o nome e o escudo deles)
+                if (statsData.competitors && statsData.competitors.length > 0) {
+                    const existingIds = new Set(data.competitors.map(c => c.id));
+                    statsData.competitors.forEach(c => {
+                        if (!existingIds.has(c.id)) {
+                            data.competitors.push(c); // Adiciona os adversários na lista principal
+                        }
+                    });
+                }
             }
         }
-
-        // DEVOLVE OS JOGOS E CLUBES PARA O JSON FINAL
-        data.games = gamesMaster;
-        data.competitors = competitorsMaster;
 
         res.status(200).json(data);
 
