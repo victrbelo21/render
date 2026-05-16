@@ -1327,46 +1327,51 @@ app.get('/estatisticas/jogador', async (req, res) => {
         
         const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
-        let response = await fetch(baseUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-        if (!response.ok) throw new Error(`Status HTTP: ${response.status}`);
+        // PASSO 1: Busca base (Traz Bio, Altura, Time)
+        let res1 = await fetch(baseUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+        if (!res1.ok) throw new Error(`Status HTTP 1: ${res1.status}`);
+        let data1 = await res1.json();
         
-        let data = await response.json();
-        
-        // Garante que o array exista
-        if (!data.competitors) data.competitors = [];
-        if (!data.games) data.games = [];
-
-        if (data && data.competitions && data.competitions.length > 0) {
-            const compIds = data.competitions.map(c => c.id).join(',');
-            const statsUrl = `${baseUrl}&competitions=${compIds}`;
+        // PASSO 2: Se tem campeonatos, faz o Request 2 (Traz Jogos e Estatísticas)
+        if (data1 && data1.competitions && data1.competitions.length > 0) {
+            const compIds = data1.competitions.map(c => c.id).join(',');
+            // Forçamos o competitionId principal pra garantir que a API libere o array "games"
+            const compPrincipal = data1.competitions[0].id;
             
-            const statsResponse = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-            if (statsResponse.ok) {
-                const statsData = await statsResponse.json(); 
+            const statsUrl = `${baseUrl}&competitions=${compIds}&competitionId=${compPrincipal}`;
+            
+            let res2 = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+            
+            if (res2.ok) {
+                let data2 = await res2.json();
                 
-                // 1. Atualiza as estatísticas avançadas
-                if (statsData.athletes && statsData.athletes[0]) {
-                    data.athletes[0].highlightStats = statsData.athletes[0].highlightStats;
+                // ==========================================
+                // LÓGICA INVERSA (Merge do Request 1 pro 2)
+                // ==========================================
+                if (data2.athletes && data2.athletes[0] && data1.athletes && data1.athletes[0]) {
+                    // Copiamos a Bio do Request 1 (que é mais completo nisso) pro Request 2
+                    data2.athletes[0].shortBio = data1.athletes[0].shortBio || data2.athletes[0].shortBio;
+                    data2.athletes[0].playerDetails = data1.athletes[0].playerDetails || data2.athletes[0].playerDetails;
+                    data2.athletes[0].nationalTeamStatsText = data1.athletes[0].nationalTeamStatsText || data2.athletes[0].nationalTeamStatsText;
+                    data2.athletes[0].age = data1.athletes[0].age || data2.athletes[0].age;
                 }
                 
-                // 2. AQUI ESTÁ A MÁGICA DOS JOGOS: Pega a lista de partidas do Request 2
-                if (statsData.games && statsData.games.length > 0) {
-                    data.games = statsData.games;
-                }
-                
-                // 3. Pega os adversários (pra renderizar o nome e o escudo deles)
-                if (statsData.competitors && statsData.competitors.length > 0) {
-                    const existingIds = new Set(data.competitors.map(c => c.id));
-                    statsData.competitors.forEach(c => {
-                        if (!existingIds.has(c.id)) {
-                            data.competitors.push(c); // Adiciona os adversários na lista principal
-                        }
+                // Garantimos que o Clube do Request 1 não se perca
+                if (data1.competitors) {
+                    if (!data2.competitors) data2.competitors = [];
+                    const exIds = new Set(data2.competitors.map(c => c.id));
+                    data1.competitors.forEach(c => {
+                        if (!exIds.has(c.id)) data2.competitors.push(c);
                     });
                 }
+                
+                // O Request 2 agora é o Rei! Devolvemos ele.
+                return res.status(200).json(data2);
             }
         }
 
-        res.status(200).json(data);
+        // Fallback: Se o jogador não tiver campeonatos listados, devolve o Request 1 puro
+        res.status(200).json(data1);
 
     } catch (error) {
         console.error("❌ Erro ao buscar jogador:", error);
