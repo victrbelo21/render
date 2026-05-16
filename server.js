@@ -1325,7 +1325,8 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athletes=${playerId}`;
+        // ADICIONAMOS O fullDetails=true QUE VOCÊ ACHOU!
+        const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
         // PASSO 1: Busca a base do jogador para descobrir as competições dele
         let response = await fetch(baseUrl, {
@@ -1335,9 +1336,8 @@ app.get('/estatisticas/jogador', async (req, res) => {
         if (!response.ok) throw new Error(`Status HTTP: ${response.status}`);
         let data = await response.json();
 
-        // PASSO 2: Se achou competições, faz um segundo request pedindo os STATS delas!
+        // PASSO 2: Puxa as estatísticas baseadas nos campeonatos em que ELE joga
         if (data && data.competitions && data.competitions.length > 0) {
-            // Pega os IDs dos torneios do jogador (ex: MLS, La Liga, Champions)
             const compIds = data.competitions.map(c => c.id).join(',');
             console.log(`🏆 Torneios encontrados pro jogador ${playerId}: ${compIds}. Puxando estatísticas...`);
             
@@ -1347,7 +1347,7 @@ app.get('/estatisticas/jogador', async (req, res) => {
             });
             
             if (statsResponse.ok) {
-                data = await statsResponse.json(); // Sobrescreve com o JSON rico em estatísticas
+                data = await statsResponse.json(); 
             }
         }
 
@@ -1355,7 +1355,7 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
     } catch (error) {
         console.error("❌ Erro ao buscar jogador:", error);
-        res.status(500).json({ success: false, error: 'Erro de comunicação com provedor estatístico' });
+        res.status(500).json({ success: false, error: 'Erro de comunicação' });
     }
 });
 
