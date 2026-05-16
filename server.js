@@ -1325,31 +1325,34 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        // ADICIONAMOS O fullDetails=true QUE VOCÊ ACHOU!
         const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
-        // PASSO 1: Busca a base do jogador para descobrir as competições dele
-        let response = await fetch(baseUrl, {
-            headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }
-        });
-
+        let response = await fetch(baseUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (!response.ok) throw new Error(`Status HTTP: ${response.status}`);
+        
         let data = await response.json();
+        
+        // SALVA OS JOGOS E CLUBES NO BOLSO ANTES DE REFAZER O REQUEST
+        const gamesMaster = data.games || [];
+        const competitorsMaster = data.competitors || [];
 
-        // PASSO 2: Puxa as estatísticas baseadas nos campeonatos em que ELE joga
         if (data && data.competitions && data.competitions.length > 0) {
             const compIds = data.competitions.map(c => c.id).join(',');
-            console.log(`🏆 Torneios encontrados pro jogador ${playerId}: ${compIds}. Puxando estatísticas...`);
-            
             const statsUrl = `${baseUrl}&competitions=${compIds}`;
-            const statsResponse = await fetch(statsUrl, {
-                headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }
-            });
             
+            const statsResponse = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
             if (statsResponse.ok) {
-                data = await statsResponse.json(); 
+                const statsData = await statsResponse.json(); 
+                // MERGE SEGURO: Atualiza só as estatísticas
+                if (statsData.athletes && statsData.athletes[0]) {
+                    data.athletes[0].highlightStats = statsData.athletes[0].highlightStats;
+                }
             }
         }
+
+        // DEVOLVE OS JOGOS E CLUBES PARA O JSON FINAL
+        data.games = gamesMaster;
+        data.competitors = competitorsMaster;
 
         res.status(200).json(data);
 
