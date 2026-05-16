@@ -1327,8 +1327,8 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        // CORREÇÃO AQUI: O endpoint exato do 365Scores é /web/athletes/ e a query é athletes=${playerId}
-        const url = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athletes=${playerId}`;
+        // Adicionamos &competitions=11,572,13,5930 para forçar a API a devolver as estatísticas
+        const url = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitions=11,572,13,5930&athletes=${playerId}`;
         
         const response = await fetch(url, {
             headers: {
