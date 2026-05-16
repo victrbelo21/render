@@ -1325,53 +1325,54 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
+        const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
-        // PASSO 1: Busca base (Traz Bio, Altura, Time)
-        let res1 = await fetch(baseUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-        if (!res1.ok) throw new Error(`Status HTTP 1: ${res1.status}`);
-        let data1 = await res1.json();
+        // PASSO 1: Busca a Bio (Idade, Altura, Time)
+        let resProfile = await fetch(profileUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+        if (!resProfile.ok) throw new Error(`Status HTTP 1: ${resProfile.status}`);
+        let dataProfile = await resProfile.json();
         
-        // PASSO 2: Se tem campeonatos, faz o Request 2 (Traz Jogos e Estatísticas)
-        if (data1 && data1.competitions && data1.competitions.length > 0) {
-            const compIds = data1.competitions.map(c => c.id).join(',');
-            // Forçamos o competitionId principal pra garantir que a API libere o array "games"
-            const compPrincipal = data1.competitions[0].id;
+        // PASSO 2: Busca Estatísticas Detalhadas
+        if (dataProfile && dataProfile.competitions && dataProfile.competitions.length > 0) {
+            const compIds = dataProfile.competitions.map(c => c.id).join(',');
+            const compPrincipal = dataProfile.competitions[0].id;
+            const statsUrl = `${profileUrl}&competitions=${compIds}&competitionId=${compPrincipal}`;
             
-            const statsUrl = `${baseUrl}&competitions=${compIds}&competitionId=${compPrincipal}`;
-            
-            let res2 = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-            
-            if (res2.ok) {
-                let data2 = await res2.json();
-                
-                // ==========================================
-                // LÓGICA INVERSA (Merge do Request 1 pro 2)
-                // ==========================================
-                if (data2.athletes && data2.athletes[0] && data1.athletes && data1.athletes[0]) {
-                    // Copiamos a Bio do Request 1 (que é mais completo nisso) pro Request 2
-                    data2.athletes[0].shortBio = data1.athletes[0].shortBio || data2.athletes[0].shortBio;
-                    data2.athletes[0].playerDetails = data1.athletes[0].playerDetails || data2.athletes[0].playerDetails;
-                    data2.athletes[0].nationalTeamStatsText = data1.athletes[0].nationalTeamStatsText || data2.athletes[0].nationalTeamStatsText;
-                    data2.athletes[0].age = data1.athletes[0].age || data2.athletes[0].age;
+            let resStats = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+            if (resStats.ok) {
+                let dataStats = await resStats.json();
+                // Copia só os números de estatísticas pro objeto principal
+                if (dataStats.athletes && dataStats.athletes[0] && dataProfile.athletes && dataProfile.athletes[0]) {
+                    dataProfile.athletes[0].highlightStats = dataStats.athletes[0].highlightStats;
                 }
-                
-                // Garantimos que o Clube do Request 1 não se perca
-                if (data1.competitors) {
-                    if (!data2.competitors) data2.competitors = [];
-                    const exIds = new Set(data2.competitors.map(c => c.id));
-                    data1.competitors.forEach(c => {
-                        if (!exIds.has(c.id)) data2.competitors.push(c);
-                    });
-                }
-                
-                // O Request 2 agora é o Rei! Devolvemos ele.
-                return res.status(200).json(data2);
             }
         }
 
-        // Fallback: Se o jogador não tiver campeonatos listados, devolve o Request 1 puro
-        res.status(200).json(data1);
+        // PASSO 3: A BALA DE PRATA - Requisição exclusiva pra API de Jogos!
+        console.log(`⚽ Buscando últimos jogos do jogador ${playerId}...`);
+        const gamesUrl = `https://webws.365scores.com/web/games/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athletes=${playerId}`;
+        
+        let resGames = await fetch(gamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+        if (resGames.ok) {
+            let dataGames = await resGames.json();
+            
+            // Injeta a matriz de jogos oficial dentro do nosso JSON
+            dataProfile.games = dataGames.games || [];
+            
+            // Injeta as imagens e nomes dos times adversários para o Front conseguir desenhar os escudos
+            if (dataGames.competitors) {
+                if (!dataProfile.competitors) dataProfile.competitors = [];
+                const existingCompIds = new Set(dataProfile.competitors.map(c => c.id));
+                dataGames.competitors.forEach(c => {
+                    if (!existingCompIds.has(c.id)) {
+                        dataProfile.competitors.push(c);
+                    }
+                });
+            }
+        }
+
+        // Devolve o Frankenstein perfeito e montado pro Front-end!
+        res.status(200).json(dataProfile);
 
     } catch (error) {
         console.error("❌ Erro ao buscar jogador:", error);
