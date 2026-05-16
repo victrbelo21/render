@@ -1327,8 +1327,8 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        // Acesso direto ao endpoint agregado que a nossa investigação do F12 descobriu
-        const url = `https://webws.365scores.com/web/player/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&playerId=${playerId}`;
+        // CORREÇÃO AQUI: O endpoint exato do 365Scores é /web/athletes/ e a query é athletes=${playerId}
+        const url = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athletes=${playerId}`;
         
         const response = await fetch(url, {
             headers: {
@@ -1339,7 +1339,6 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         if (!response.ok) throw new Error(`Status HTTP: ${response.status}`);
         
-        // Repassa a estrutura integral e original para o front-end "mastigar" 
         const data = await response.json();
         res.status(200).json(data);
 
