@@ -1325,82 +1325,49 @@ app.get('/estatisticas/jogador', async (req, res) => {
 
         console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
         
-        const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
+        const baseUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
-        // PASSO 1: Busca a Bio (Idade, Altura, Time)
-        let resProfile = await fetch(profileUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-        if (!resProfile.ok) throw new Error(`Status HTTP 1: ${resProfile.status}`);
-        let dataProfile = await resProfile.json();
+        // PASSO 1: Busca a Bio e descobre os campeonatos
+        let res1 = await fetch(baseUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+        if (!res1.ok) throw new Error(`Status HTTP 1: ${res1.status}`);
+        let data1 = await res1.json();
         
-        let compIds = "";
-        let compPrincipal = "";
-        let teamId = "";
-
-        // Pega o ID do Clube do jogador para o nosso Cão de Guarda
-        if (dataProfile.competitors && dataProfile.competitors.length > 0) {
-            const club = dataProfile.competitors.find(c => c.type === 1);
-            if (club) teamId = club.id;
-        }
-        
-        // PASSO 2: Busca Estatísticas Detalhadas
-        if (dataProfile && dataProfile.competitions && dataProfile.competitions.length > 0) {
-            compIds = dataProfile.competitions.map(c => c.id).join(',');
-            compPrincipal = dataProfile.competitions[0].id;
-            const statsUrl = `${profileUrl}&competitions=${compIds}&competitionId=${compPrincipal}`;
+        // PASSO 2: Se tem campeonatos, busca o JSON completo (Estatísticas + Últimos Jogos do Jogador)
+        if (data1 && data1.competitions && data1.competitions.length > 0) {
+            const compIds = data1.competitions.map(c => c.id).join(',');
+            // Passar o competitionId é o gatilho pro 365Scores liberar a lista de Jogos!
+            const compPrincipal = data1.competitions[0].id;
             
-            let resStats = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-            if (resStats.ok) {
-                let dataStats = await resStats.json();
-                if (dataStats.athletes && dataStats.athletes[0] && dataProfile.athletes && dataProfile.athletes[0]) {
-                    dataProfile.athletes[0].highlightStats = dataStats.athletes[0].highlightStats;
+            const statsUrl = `${baseUrl}&competitions=${compIds}&competitionId=${compPrincipal}`;
+            
+            let res2 = await fetch(statsUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
+            
+            if (res2.ok) {
+                let data2 = await res2.json();
+                
+                // Salva a Bio do Request 1 caso a API tenha omitido no Request 2
+                if (data2.athletes && data2.athletes[0] && data1.athletes && data1.athletes[0]) {
+                    data2.athletes[0].shortBio = data1.athletes[0].shortBio || data2.athletes[0].shortBio;
+                    data2.athletes[0].playerDetails = data1.athletes[0].playerDetails || data2.athletes[0].playerDetails;
+                    data2.athletes[0].age = data1.athletes[0].age || data2.athletes[0].age;
                 }
+                
+                // Mescla os times adversários pra não quebrar as imagens dos escudos
+                if (data1.competitors) {
+                    if (!data2.competitors) data2.competitors = [];
+                    const exIds = new Set(data2.competitors.map(c => c.id));
+                    data1.competitors.forEach(c => {
+                        if (!exIds.has(c.id)) data2.competitors.push(c);
+                    });
+                }
+                
+                // Devolve a resposta 2 inteira (com os games específicos dele)
+                return res.status(200).json(data2);
             }
         }
 
-        console.log(`⚽ Buscando últimos jogos do jogador...`);
-        // PASSO 3: Tentativa 1 (Buscando o parâmetro correto 'players')
-        let gamesUrl = `https://webws.365scores.com/web/games/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&players=${playerId}`;
-        if (compIds) gamesUrl += `&competitions=${compIds}`;
-        
-        let resGames = await fetch(gamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-        let dataGames = await resGames.json();
-
-        // O CÃO DE GUARDA: Filtra pra ver se o 365Scores devolveu lixo (jogos aleatórios ao vivo)
-        let jogosValidos = [];
-        if (dataGames.games) {
-            jogosValidos = dataGames.games.filter(g => {
-                const gameObj = g.game || g;
-                return gameObj.homeCompetitor?.id == teamId || gameObj.awayCompetitor?.id == teamId;
-            });
-        }
-
-        // TENTATIVA 2 (Fallback Infalível): Se o array validado veio vazio, busca os jogos do Clube dele!
-        if (jogosValidos.length === 0 && teamId) {
-            console.log(`⚠️ A API ocultou os jogos do jogador. Acionando Fallback para jogos do Clube (${teamId})...`);
-            const teamGamesUrl = `https://webws.365scores.com/web/games/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
-            let resTeamGames = await fetch(teamGamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
-            dataGames = await resTeamGames.json();
-            
-            if (dataGames.games) {
-                jogosValidos = dataGames.games.filter(g => {
-                    const gameObj = g.game || g;
-                    return gameObj.homeCompetitor?.id == teamId || gameObj.awayCompetitor?.id == teamId;
-                });
-            }
-        }
-        
-        // Salva os jogos validados e os escudos dos adversários no JSON final
-        dataProfile.games = jogosValidos;
-        
-        if (dataGames.competitors) {
-            if (!dataProfile.competitors) dataProfile.competitors = [];
-            const existingCompIds = new Set(dataProfile.competitors.map(c => c.id));
-            dataGames.competitors.forEach(c => {
-                if (!existingCompIds.has(c.id)) dataProfile.competitors.push(c);
-            });
-        }
-
-        res.status(200).json(dataProfile);
+        // Fallback se não tiver campeonatos
+        res.status(200).json(data1);
 
     } catch (error) {
         console.error("❌ Erro ao buscar jogador:", error);
