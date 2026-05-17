@@ -838,11 +838,7 @@ app.post('/agente-bolao', async (req, res) => {
             return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data });
         }
 
-        // A sua função extractTextFromAgentPayload é excelente e vai achar 
-        // o texto dentro da estrutura complexa que o Langflow retorna
-        const resposta = extractTextFromAgentPayload(data); 
-
-        res.json({ resposta: resposta }); 
+        res.json({ resposta: data });
 
     } catch (error) {
         console.error("Erro no Agente:", error);
