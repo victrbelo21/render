@@ -787,14 +787,15 @@ app.post('/abrir-pacote', async (req, res) => {
 });
 
 // =====================================================================
-// ROTA DO AGENTE DE IA NATIVO (IBM Agent Studio - Langflow)
+// ROTA DO AGENTE DE IA NATIVO (IBM Agentic Apps - REST A2A API)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
-    const { mensagem, historico, user_email } = req.body;
+    const { mensagem, historico } = req.body;
     
     if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
 
     try {
+        // ESSA URL DEVE SER A DE AGENTES DO EMBAIXADOR: https://servicesessentials.ibm.com/agenticapps/a2a/...
         const agenteEndpoint = process.env.ICA_AGENT_URL; 
         
         let promptFinal = "";
@@ -812,21 +813,16 @@ app.post('/agente-bolao', async (req, res) => {
             promptFinal = mensagem;
         }
 
-        // NOVO FORMATO DE PAYLOAD DA IBM
+        // Estrutura limpa exigida pelo endpoint A2A público do AutoGen
         const payload = {
-            output_type: "chat",
-            input_type: "chat",
-            input_value: promptFinal,
-            // Usa o email como ID de sessão para a memória da IA isolar cada usuário.
-            // Se vier sem email, cria uma sessão aleatória.
-            session_id: user_email || crypto.randomUUID() 
+            message: promptFinal
         };
 
         const response = await fetch(agenteEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': process.env.ICA_APP_KEY // HEADER ATUALIZADO
+                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` // Usa o formato Bearer com o token ak_...
             },
             body: JSON.stringify(payload)
         });
@@ -834,14 +830,15 @@ app.post('/agente-bolao', async (req, res) => {
         const data = await response.json();
         
         if (!response.ok) {
-            console.error("Erro da API da IBM:", data);
+            console.error("Erro na chamada A2A da IBM:", data);
             return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data });
         }
 
-        res.json({ resposta: data });
+        // Devolve o payload bruto para o frontend fazer a limpeza com a extractTextFromAgentPayload
+        res.json({ resposta: data }); 
 
     } catch (error) {
-        console.error("Erro no Agente:", error);
+        console.error("Erro no Agente A2A:", error);
         res.status(500).json({ error: "O agente do bolão está aquecendo no vestiário." });
     }
 });
