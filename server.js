@@ -6,6 +6,7 @@ const cheerio = require('cheerio');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
+const crypto = require('crypto');
 const app = express();
 
 // Configuração de segurança e parse
@@ -786,10 +787,10 @@ app.post('/abrir-pacote', async (req, res) => {
 });
 
 // =====================================================================
-// ROTA DO AGENTE DE IA NATIVO (Bolão Agentic - JSON-RPC 2.0)
+// ROTA DO AGENTE DE IA NATIVO (IBM Agent Studio - Langflow)
 // =====================================================================
 app.post('/agente-bolao', async (req, res) => {
-    const { mensagem, historico } = req.body;
+    const { mensagem, historico, user_email } = req.body;
     
     if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
 
@@ -811,30 +812,37 @@ app.post('/agente-bolao', async (req, res) => {
             promptFinal = mensagem;
         }
 
-        const rpcPayload = {
-            jsonrpc: "2.0",
-            method: "message/send", 
-            params: { message: promptFinal },
-            id: 1 
+        // NOVO FORMATO DE PAYLOAD DA IBM
+        const payload = {
+            output_type: "chat",
+            input_type: "chat",
+            input_value: promptFinal,
+            // Usa o email como ID de sessão para a memória da IA isolar cada usuário.
+            // Se vier sem email, cria uma sessão aleatória.
+            session_id: user_email || crypto.randomUUID() 
         };
 
         const response = await fetch(agenteEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` 
+                'x-api-key': process.env.ICA_APP_KEY // HEADER ATUALIZADO
             },
-            body: JSON.stringify(rpcPayload)
+            body: JSON.stringify(payload)
         });
 
         const data = await response.json();
         
-        if (data.error) {
-            console.error("Erro JSON-RPC da IBM:", data.error);
-            return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data.error });
+        if (!response.ok) {
+            console.error("Erro da API da IBM:", data);
+            return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data });
         }
 
-        res.json({ resposta: data.result }); 
+        // A sua função extractTextFromAgentPayload é excelente e vai achar 
+        // o texto dentro da estrutura complexa que o Langflow retorna
+        const resposta = extractTextFromAgentPayload(data); 
+
+        res.json({ resposta: resposta }); 
 
     } catch (error) {
         console.error("Erro no Agente:", error);
