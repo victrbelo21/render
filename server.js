@@ -6,7 +6,6 @@ const cheerio = require('cheerio');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 
-const crypto = require('crypto');
 const app = express();
 
 // Configuração de segurança e parse
