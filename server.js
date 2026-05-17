@@ -813,16 +813,19 @@ app.post('/agente-bolao', async (req, res) => {
             promptFinal = mensagem;
         }
 
-        // Estrutura limpa exigida pelo endpoint A2A público do AutoGen
+        // O payload TEM que ter a roupagem do JSON-RPC 2.0
         const payload = {
-            message: promptFinal
+            jsonrpc: "2.0",
+            method: "message/send", 
+            params: { message: promptFinal },
+            id: 1 
         };
 
         const response = await fetch(agenteEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` // Usa o formato Bearer com o token ak_...
+                'Authorization': `Bearer ${process.env.ICA_APP_KEY}` 
             },
             body: JSON.stringify(payload)
         });
