@@ -742,17 +742,44 @@ app.post('/abrir-pacote', async (req, res) => {
         const figurinhasSorteadas = [];
         const QTD_POR_PACOTE = 5;
 
+        // --- MAPA DE RARIDADES DEFINIDO ---
+        const figsSuperRaras = [1, 2, 3, 4, 5, 6];
+        const figsRaras = [7, 12, 19, 43, 48, 53, 58, 63, 68, 73, 78];
+        const figsIncomuns = [
+            8, 9, 10, 11, 13, 14, 15, 16, 17, 18,
+            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+            31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41
+        ];
+        const figsComuns = [
+            44, 45, 46, 54, 55, 56, 64, 65, 66,
+            74, 75, 76, 79, 80, 81, 82, 83, 84,
+            85, 86, 87, 88
+        ];
+
+        // --- SORTEIO PONDERADO ---
         for (let i = 0; i < QTD_POR_PACOTE; i++) {
             const chance = Math.random() * 100;
-            let figurinhaSorteada;
+            let poolSorteio = [];
 
-            if (chance < 5) {
-                figurinhaSorteada = Math.floor(Math.random() * (88 - 77 + 1)) + 77;
-            } else if (chance < 25) {
-                figurinhaSorteada = Math.floor(Math.random() * (76 - 61 + 1)) + 61;
-            } else {
-                figurinhaSorteada = Math.floor(Math.random() * (60 - 1 + 1)) + 1;
+            // 4% de chance: Média de ~6 super raras em 150 figurinhas totais
+            if (chance < 4) {
+                poolSorteio = figsSuperRaras;
+            } 
+            // 12% de chance: Média de ~18 raras ao final
+            else if (chance < 16) {
+                poolSorteio = figsRaras;
+            } 
+            // 34% de chance: Média de ~51 incomuns ao final
+            else if (chance < 50) {
+                poolSorteio = figsIncomuns;
+            } 
+            // 50% de chance: Base do álbum (Escudos, Estádios, etc.)
+            else {
+                poolSorteio = figsComuns;
             }
+
+            // Sorteia aleatoriamente um ID dentro do grupo selecionado
+            const figurinhaSorteada = poolSorteio[Math.floor(Math.random() * poolSorteio.length)];
             figurinhasSorteadas.push(figurinhaSorteada);
         }
 
