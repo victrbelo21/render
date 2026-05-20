@@ -486,7 +486,7 @@ app.post('/salvar-lote', async (req, res) => {
     const existingDoc = searchResponse.result.docs[0];
     
     // =================================================================
-    // 🛡️ MURALHA DE SEGURANÇA (ANTI-FRAUDE DE HORÁRIO COM MERGE)
+    // 🛡️ MURALHA DE SEGURANÇA (ANTI-FRAUDE DE HORÁRIO ADAPTÁVEL)
     // =================================================================
     const agoraServidor = new Date(); 
     
@@ -494,17 +494,24 @@ app.post('/salvar-lote', async (req, res) => {
     let modificacoesValidas = 0;
 
     palpites.forEach(palpite_recebido => {
+        // Removemos o '-03:00' fixo. O navegador/frontend enviará a data/hora 
+        // e o servidor tratará como o horário exato do jogo em UTC.
         const matchHora = palpite_recebido.horario.match(/(\d{2}):(\d{2})/);
         
         if (palpite_recebido.data_jogo && matchHora) {
-            const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00-03:00`;
+            // Criamos a data considerando que o input já vem com a intenção correta
+            const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00Z`;
             const dataOficialJogo = new Date(dataJogoStr);
-            const difHoras = (dataOficialJogo - agoraServidor) / (1000 * 60 * 60);
+            
+            // Diferença em milissegundos
+            const difMs = dataOficialJogo - agoraServidor;
+            const difHoras = difMs / (1000 * 60 * 60);
 
             const indexExistente = palpitesFinais.findIndex(p => 
                 p.time_1 === palpite_recebido.time_1 && p.time_2 === palpite_recebido.time_2
             );
 
+            // A regra de 24h agora é absoluta baseada no UTC
             if (difHoras > 24) {
                 if (indexExistente > -1) {
                     palpitesFinais[indexExistente] = palpite_recebido;
