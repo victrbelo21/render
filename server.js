@@ -29,12 +29,15 @@ cloudant.setServiceUrl(process.env.CLOUDANT_URL);
 const DB_NAME = 'palpites_2026';
 
 // =====================================================================
-// CACHE DO RANKING
+// CACHE DO RANKING E MONITORAMENTO ONLINE
 // =====================================================================
 let rankingCache = null;
 let ultimaAtualizacaoCache = 0;
 const TEMPO_CACHE_MINUTOS = 5;
 const ID_CONTROLE_JOGOS = 'controle_processamento_jogos';
+
+// Cofre em memória para monitorar IBMers online sem estressar o banco
+const usuariosOnline = new Map();
 
 // =====================================================================
 // CACHE DE NOTÍCIAS (1x por dia, por idioma)
@@ -168,8 +171,23 @@ function formatarDataISO(dataString) {
 }
 
 // =====================================================================
-// 2. O TRABALHADOR INVISÍVEL (CRON JOB) - Recálculo Contínuo
+// 2. SISTEMAS AUTOMATIZADOS (CRON JOBS)
 // =====================================================================
+
+// TRABALHADOR ANTI-SONO: Dispara uma chamada externa a cada 14 minutos para burlar o shutdown do Render Free
+cron.schedule('*/14 * * * *', async () => {
+    // IMPORTANTE: Configure a variável de ambiente APP_URL no painel do Render (ex: https://seu-app.onrender.com)
+    // Se não configurar, ele usará como fallback a URL padrão que você já mapeou.
+    const selfUrl = process.env.APP_URL || 'https://render-74qy.onrender.com';
+    try {
+        const res = await fetch(`${selfUrl}/ranking`);
+        if (res.ok) console.log('⏰ [Anti-Sono] Energia injetada! Render impedido de hibernar com sucesso.');
+    } catch (error) {
+        console.error('⚠️ [Anti-Sono] Erro ao se auto-chamar:', error.message);
+    }
+});
+
+// TRABALHADOR INVISÍVEL - Recálculo Contínuo de Resultados
 cron.schedule('*/10 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
     
@@ -273,20 +291,20 @@ cron.schedule('*/10 * * * *', async () => {
                         bateuData = (diffEmDias <= 1); 
                     }
 
-                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
+                    const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
                                        (away.includes(time2Ingles) || time2Ingles.includes(away));
-                    const ordemInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
+                    const ordreInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
                                            (home.includes(time2Ingles) || time2Ingles.includes(home));
 
-                    return bateuData && (ordemExata || ordemInvertida);
+                    return bateuData && (ordreExata || ordreInvertida);
                 });
 
                 if (jogoFinalizado) {
                     const home = formatarTexto(jogoFinalizado.homeTeam.name);
-                    const ordemExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
+                    const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
                     
-                    let placarReal1 = ordemExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
-                    let placarReal2 = ordemExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
+                    let placarReal1 = ordreExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
+                    let placarReal2 = ordreExata ? fontFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
 
                     const precisaCalcular = jogosOficiais.some(jo => jo.id === jogoFinalizado.id);
                     
@@ -374,11 +392,8 @@ cron.schedule('*/10 * * * *', async () => {
 // =====================================================================
 app.get('/noticias', async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0];
-    
-    // Captura o idioma pedido pelo frontend (padrão é 'pt')
     const lang = req.query.lang === 'es' ? 'es' : 'pt';
 
-    // Se já temos cache para o dia de hoje NESTE idioma, entrega instantaneamente
     if (noticiasCache[lang] && ultimaDataNoticias[lang] === hoje) {
         console.log(`📰 Servindo notícias [${lang.toUpperCase()}] da FIFA na velocidade da luz (direto do Cache)!`);
         return res.json({
@@ -401,8 +416,6 @@ app.get('/noticias', async (req, res) => {
         if (!response.ok) throw new Error(`A FIFA barrou a porta: ${response.status}`);
 
         const data = await response.json();
-
-        // Encontra o array de notícias independente do formato da FIFA
         let listaNoticias = Array.isArray(data) ? data : 
                             (data.articles && Array.isArray(data.articles)) ? data.articles : 
                             (data.items && Array.isArray(data.items)) ? data.items : [];
@@ -423,7 +436,6 @@ app.get('/noticias', async (req, res) => {
             if (rawLink) {
                 const partes = rawLink.split('/').filter(p => p.length > 0);
                 const slug = partes[partes.length - 1];
-                // Monta o link final respeitando o idioma
                 link = `https://www.fifa.com/${lang}/tournaments/mens/worldcup/canadamexicousa2026/articles/${slug}`;
             }
 
@@ -453,8 +465,6 @@ app.get('/noticias', async (req, res) => {
 
     } catch (error) {
         console.error(`❌ Erro na API da FIFA [${lang.toUpperCase()}]:`, error);
-        
-        // Resgate do Cache antigo se a FIFA cair
         if (noticiasCache[lang]) {
             console.log(`⚠️ Servindo cache antigo [${lang.toUpperCase()}] como resgate.`);
             return res.json({ status: 'ok', articles: noticiasCache[lang].slice(0, 5) });
@@ -466,6 +476,42 @@ app.get('/noticias', async (req, res) => {
 // =====================================================================
 // 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
 // =====================================================================
+
+// ROTA DE MONITORAMENTO: Registra a batida de ponto de atividade do usuário
+app.post('/api/ping', (req, res) => {
+    const { user_email, user_name, pagina_atual } = req.body;
+    if (!user_email) return res.status(400).json({ success: false, error: 'Email requerido' });
+
+    usuariosOnline.set(user_email, {
+        nome: user_name || user_email.split('@')[0],
+        pagina: pagina_atual || 'index.html',
+        timestamp: Date.now()
+    });
+
+    res.status(200).json({ success: true });
+});
+
+// ROTA ADMIN AVULSA: Retorna quem está ativo nos últimos 60 segundos
+app.get('/admin/online', (req, res) => {
+    const agora = Date.now();
+    const limiteInatividade = 60 * 1000; // 1 minuto de tolerância
+    const listaFinal = [];
+
+    for (const [email, dados] of usuariosOnline.entries()) {
+        if (agora - dados.timestamp < limiteInatividade) {
+            listaFinal.push({
+                email,
+                nome: dados.nome,
+                pagina: dados.pagina,
+                ultimo_visto: new Date(dados.timestamp).toLocaleTimeString('pt-BR')
+            });
+        } else {
+            usuariosOnline.delete(email); // Limpeza automática de usuários inativos
+        }
+    }
+
+    res.status(200).json({ success: true, total_online: listaFinal.length, usuarios: listaFinal });
+});
 
 app.post('/salvar-lote', async (req, res) => {
   try {
@@ -494,16 +540,12 @@ app.post('/salvar-lote', async (req, res) => {
     let modificacoesValidas = 0;
 
     palpites.forEach(palpite_recebido => {
-        // Removemos o '-03:00' fixo. O navegador/frontend enviará a data/hora 
-        // e o servidor tratará como o horário exato do jogo em UTC.
         const matchHora = palpite_recebido.horario.match(/(\d{2}):(\d{2})/);
         
         if (palpite_recebido.data_jogo && matchHora) {
-            // Criamos a data considerando que o input já vem com a intenção correta
             const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00-03:00`;
             const dataOficialJogo = new Date(dataJogoStr);
             
-            // Diferença em milissegundos
             const difMs = dataOficialJogo - agoraServidor;
             const difHoras = difMs / (1000 * 60 * 60);
 
@@ -511,7 +553,7 @@ app.post('/salvar-lote', async (req, res) => {
                 p.time_1 === palpite_recebido.time_1 && p.time_2 === palpite_recebido.time_2
             );
 
-            // A regra de 24h agora é absoluta baseada no UTC
+            // A regra de 2h agora é absoluta baseada no fuso de Brasília vindo do HTML
             if (difHoras > 2) {
                 if (indexExistente > -1) {
                     palpitesFinais[indexExistente] = palpite_recebido;
@@ -520,7 +562,7 @@ app.post('/salvar-lote', async (req, res) => {
                 }
                 modificacoesValidas++;
             } else {
-                console.log(`🚨 BLOQUEADO: ${user_email} tentou enviar/alterar o jogo ${palpite_recebido.time_1} x ${palpite_recebido.time_2} com menos de 24h de antecedência.`);
+                console.log(`🚨 BLOQUEADO: ${user_email} tentou enviar/alterar o jogo ${palpite_recebido.time_1} x ${palpite_recebido.time_2} com menos de 2h de antecedência.`);
             }
         }
     });
@@ -535,7 +577,7 @@ app.post('/salvar-lote', async (req, res) => {
       existingDoc.timestamp = agoraServidor.toISOString();
 
       await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Cartela atualizada com segurança" });
+      res.status(200).json({ success: true, message: "Cartela updated" });
     } else {
       const novoDocumento = {
         type: "cartela_usuario",
@@ -547,7 +589,7 @@ app.post('/salvar-lote', async (req, res) => {
         timestamp: agoraServidor.toISOString()
       };
       await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-      res.status(200).json({ success: true, message: "Cartela criada com segurança" });
+      res.status(200).json({ success: true, message: "Cartela criada" });
     }
   } catch (error) {
     console.error("Erro /salvar-lote:", error);
@@ -635,7 +677,6 @@ app.post('/buscar-cartela', async (req, res) => {
 
     const existingDoc = searchResponse.result.docs[0];
     
-    // --- HIGIENIZAÇÃO DO BACKEND ---
     if (existingDoc && existingDoc.album) {
         existingDoc.album.coladas = (existingDoc.album.coladas || []).filter(id => id >= 1 && id <= 88);
         existingDoc.album.repetidas = (existingDoc.album.repetidas || []).filter(id => id >= 1 && id <= 88);
@@ -679,7 +720,7 @@ app.post('/atualizar-perfil', async (req, res) => {
       await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
       res.status(200).json({ success: true, message: "Perfil atualizado!" });
     } else {
-      res.status(404).json({ success: false, error: 'Usuário não encontrado. Crie um palpite primeiro.' });
+      res.status(404).json({ success: false, error: 'User not found' });
     }
   } catch (error) {
     console.error("Erro ao atualizar perfil:", error);
@@ -749,7 +790,6 @@ app.post('/abrir-pacote', async (req, res) => {
         const figurinhasSorteadas = [];
         const QTD_POR_PACOTE = 5;
 
-        // --- MAPA DE RARIDADES DEFINIDO ---
         const figsSuperRaras = [1, 2, 3, 4, 5, 6];
         const figsRaras = [7, 12, 19, 43, 48, 53, 58, 63, 68, 73, 78];
         const figsIncomuns = [
@@ -763,29 +803,23 @@ app.post('/abrir-pacote', async (req, res) => {
             85, 86, 87, 88
         ];
 
-        // --- SORTEIO PONDERADO ---
         for (let i = 0; i < QTD_POR_PACOTE; i++) {
             const chance = Math.random() * 100;
             let poolSorteio = [];
 
-            // 4% de chance: Média de ~6 super raras em 150 figurinhas totais
             if (chance < 4) {
                 poolSorteio = figsSuperRaras;
             } 
-            // 12% de chance: Média de ~18 raras ao final
             else if (chance < 16) {
                 poolSorteio = figsRaras;
             } 
-            // 34% de chance: Média de ~51 incomuns ao final
             else if (chance < 50) {
                 poolSorteio = figsIncomuns;
             } 
-            // 50% de chance: Base do álbum (Escudos, Estádios, etc.)
             else {
                 poolSorteio = figsComuns;
             }
 
-            // Sorteia aleatoriamente um ID dentro do grupo selecionado
             const figurinhaSorteada = poolSorteio[Math.floor(Math.random() * poolSorteio.length)];
             figurinhasSorteadas.push(figurinhaSorteada);
         }
@@ -828,9 +862,7 @@ app.post('/agente-bolao', async (req, res) => {
     if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
 
     try {
-        // ESSA URL DEVE SER A DE AGENTES DO EMBAIXADOR: https://servicesessentials.ibm.com/agenticapps/a2a/...
         const agenteEndpoint = process.env.ICA_AGENT_URL; 
-        
         let promptFinal = "";
 
         if (historico && historico.length > 0) {
@@ -846,7 +878,6 @@ app.post('/agente-bolao', async (req, res) => {
             promptFinal = mensagem;
         }
 
-        // O payload TEM que ter a roupagem do JSON-RPC 2.0
         const payload = {
             jsonrpc: "2.0",
             method: "message/send", 
@@ -870,7 +901,6 @@ app.post('/agente-bolao', async (req, res) => {
             return res.status(400).json({ error: "Erro de comunicação com o Agente", detalhes: data });
         }
 
-        // Devolve o payload bruto para o frontend fazer a limpeza com a extractTextFromAgentPayload
         res.json({ resposta: data }); 
 
     } catch (error) {
@@ -1190,7 +1220,7 @@ app.post('/trade/confirm', async (req, res) => {
         const { proposta_id, user_email, acao } = req.body;
         if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
 
-        const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
+        const propuesta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
         if (user_email && user_email !== proposta.proponente_email) return res.status(403).json({ success: false, error: "Acesso negado." });
         if (proposta.status !== "aguardando_confirmacao") return res.status(400).json({ success: false, error: "Confirmação indisponível." });
 
@@ -1325,7 +1355,7 @@ app.get('/estatisticas/elencos', async (req, res) => {
                     const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
 
                     elenco.push({
-                        id: atleta.id, // Adicionado para uso posterior no Modal de Perfil
+                        id: atleta.id,
                         nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
                         posicao: pos, 
                         nascimento: nascimento,
@@ -1354,7 +1384,6 @@ function mapPosicao(typeId) {
     return posicoes[typeId] || "Indefinido";
 }
 
-// 6. PERFIL DO JOGADOR (Proxy 365Scores para Perfil)
 app.get('/estatisticas/jogador', async (req, res) => {
     try {
         const playerId = req.query.id;
@@ -1364,12 +1393,10 @@ app.get('/estatisticas/jogador', async (req, res) => {
         
         const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
-        // PASSO 1: Busca a Bio (Idade, Altura, Time)
         let resProfile = await fetch(profileUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (!resProfile.ok) throw new Error(`Status HTTP 1: ${resProfile.status}`);
         let dataProfile = await resProfile.json();
         
-        // PASSO 2: Busca Estatísticas Detalhadas
         if (dataProfile && dataProfile.competitions && dataProfile.competitions.length > 0) {
             const compIds = dataProfile.competitions.map(c => c.id).join(',');
             const compPrincipal = dataProfile.competitions[0].id;
@@ -1384,22 +1411,17 @@ app.get('/estatisticas/jogador', async (req, res) => {
             }
         }
 
-        // PASSO 3: A ROTA CORRETA DE JOGOS (Usando /web/athletes/games/ e athleteId)
         console.log(`⚽ Buscando partidas reais do atleta ${playerId}...`);
         const gamesUrl = `https://webws.365scores.com/web/athletes/games/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athleteId=${playerId}`;
         
         let resGames = await fetch(gamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (resGames.ok) {
             let dataGames = await resGames.json();
-            
-            // Sincroniza a lista de partidas originais
             dataProfile.games = dataGames.games || [];
             
-            // Mescla os times adversários encontrados no payload de jogos para renderizar os escudos
             if (dataGames.competitors) {
                 if (!dataProfile.competitors) dataProfile.competitors = [];
                 const existingCompIds = new Set(dataProfile.competitors.map(c => c.id));
-                statsData.competitors = dataGames.competitors;
                 dataGames.competitors.forEach(c => {
                     if (!existingCompIds.has(c.id)) {
                         dataProfile.competitors.push(c);
@@ -1408,7 +1430,6 @@ app.get('/estatisticas/jogador', async (req, res) => {
             }
         }
 
-        // Devolve o payload unificado pro Frontend
         res.status(200).json(dataProfile);
 
     } catch (error) {
@@ -1421,7 +1442,7 @@ app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, sta
 app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
 
 // =====================================================================
-// 7. INICIALIZAÇÃO DO SERVIDOR
+// 9. INICIALIZAÇÃO DO SERVIDOR
 // =====================================================================
 const port = process.env.PORT || 8080;
 app.listen(port, '0.0.0.0', () => {
