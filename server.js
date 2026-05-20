@@ -512,7 +512,7 @@ app.post('/salvar-lote', async (req, res) => {
             );
 
             // A regra de 24h agora é absoluta baseada no UTC
-            if (difHoras > 24) {
+            if (difHoras > 2) {
                 if (indexExistente > -1) {
                     palpitesFinais[indexExistente] = palpite_recebido;
                 } else {
