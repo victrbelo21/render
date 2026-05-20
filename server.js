@@ -500,7 +500,7 @@ app.post('/salvar-lote', async (req, res) => {
         
         if (palpite_recebido.data_jogo && matchHora) {
             // Criamos a data considerando que o input já vem com a intenção correta
-            const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00Z`;
+            const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00-03:00`;
             const dataOficialJogo = new Date(dataJogoStr);
             
             // Diferença em milissegundos
