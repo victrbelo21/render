@@ -1220,7 +1220,7 @@ app.post('/trade/confirm', async (req, res) => {
         const { proposta_id, user_email, acao } = req.body;
         if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
 
-        const propuesta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
+        const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
         if (user_email && user_email !== proposta.proponente_email) return res.status(403).json({ success: false, error: "Acesso negado." });
         if (proposta.status !== "aguardando_confirmacao") return res.status(400).json({ success: false, error: "Confirmação indisponível." });
 
