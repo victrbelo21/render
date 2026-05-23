@@ -1271,10 +1271,16 @@ app.post('/trade/confirm', async (req, res) => {
 // 8. ROTAS DE ESTATÍSTICAS (DIRETO DA API OFICIAL DA FIFA & 365SCORES)
 // =====================================================================
 
+// Mapeamento de Idiomas para a API do 365Scores (31 = PT-BR, 7 = Espanhol)
+const scoresLangMap = { pt: 31, es: 7 };
+
 app.get('/estatisticas/standings', async (req, res) => {
     try {
-        console.log('📊 Buscando tabela oficial direto da API da FIFA...');
-        const fifaUrl = 'https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=pt&count=200';
+        const lang = req.query.lang === 'es' ? 'es' : 'pt';
+        console.log(`📊 Buscando tabela oficial direto da API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
+        
+        // CONFIGURAÇÃO: Mudamos 'language=pt' para 'language=${lang}' dinâmico
+        const fifaUrl = `https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=${lang}&count=200`;
         const response = await fetch(fifaUrl);
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
         
@@ -1289,7 +1295,8 @@ app.get('/estatisticas/standings', async (req, res) => {
                 if (!tabelaLimpa[letraGrupo]) tabelaLimpa[letraGrupo] = [];
                 
                 tabelaLimpa[letraGrupo].push({
-                    posicao: item.Position, time: item.Team?.Name?.[0]?.Description || 'A definir',
+                    posicao: item.Position, 
+                    time: item.Team?.Name?.[0]?.Description || 'A definir',
                     escudo: item.Team?.PictureUrl || `https://ui-avatars.com/api/?name=${item.Team?.IdCountry || 'FIFA'}&background=f2f4f8`,
                     pontos: item.Points || 0, jogos: item.Played || 0, vitorias: item.Won || 0,
                     empates: item.Drawn || 0, derrotas: item.Lost || 0, golsPro: item.GoalsFor || 0,
@@ -1307,8 +1314,11 @@ app.get('/estatisticas/standings', async (req, res) => {
 
 app.get('/estatisticas/chaveamento', async (req, res) => {
     try {
-        console.log('🌳 Buscando árvore do mata-mata na API da FIFA...');
-        const fifaStagesUrl = 'https://api.fifa.com/api/v3/stages?idSeason=285023&language=pt';
+        const lang = req.query.lang === 'es' ? 'es' : 'pt';
+        console.log(`🌳 Buscando árvore do mata-mata na API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
+        
+        // CONFIGURAÇÃO: Mudamos 'language=pt' para 'language=${lang}' dinâmico
+        const fifaStagesUrl = `https://api.fifa.com/api/v3/stages?idSeason=285023&language=${lang}`;
         const response = await fetch(fifaStagesUrl);
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
         
@@ -1327,10 +1337,15 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
+        const lang = req.query.lang === 'es' ? 'es' : 'pt';
+        const langId365 = scoresLangMap[lang]; // Obtém o id de idioma correto (31 ou 7)
+
         if (!teamId) return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
 
-        console.log(`👕 Buscando elenco do time ${teamId} no 365Scores...`);
-        const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
+        console.log(`👕 Buscando elenco do time ${teamId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
+        
+        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL do 365Scores
+        const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
         const response = await fetch(scoresUrl);
         
         if (!response.ok) throw new Error(`O 365Scores bloqueou com status: ${response.status}`);
@@ -1347,8 +1362,12 @@ app.get('/estatisticas/elencos', async (req, res) => {
                     let pos = "Indefinido";
                     
                     if (atleta.position) {
-                        if (atleta.position.isStaff || atleta.position.id === 0) pos = "Treinador";
-                        else pos = mapPosicao(atleta.position.id) || atleta.position.name || "Jogador de Linha";
+                        if (atleta.position.isStaff || atleta.position.id === 0) {
+                            pos = lang === 'es' ? "Director Técnico" : "Treinador";
+                        } else {
+                            // Passamos o idioma atual para traduzir a string da posição direto no backend
+                            pos = mapPosicao(atleta.position.id, lang) || atleta.position.name || "Jogador de Linha";
+                        }
                     }
 
                     const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
@@ -1363,14 +1382,16 @@ app.get('/estatisticas/elencos', async (req, res) => {
                         foto: `https://imagecache.365scores.com/image/upload/f_png,w_80,h_80,c_limit,q_auto:eco,dpr_2,d_Athletes:${atleta.id}.png,r_max,c_thumb,g_face,z_0.65/${imgVersion}Athletes/NationalTeam/${atleta.id}`
                     });
 
-                    if (pos === "Treinador") treinadorEncontrado = true;
+                    if (atleta.position && (atleta.position.isStaff || atleta.position.id === 0)) treinadorEncontrado = true;
                 });
             }
         }
 
         if (!treinadorEncontrado && elenco.length > 0) {
              elenco.push({
-                 nome: "Não informado oficialmente", posicao: "Treinador", nascimento: "-", camisa: "-",
+                 nome: lang === 'es' ? "No informado oficialmente" : "Não informado oficialmente", 
+                 posicao: lang === 'es' ? "Director Técnico" : "Treinador", 
+                 nascimento: "-", camisa: "-",
                  foto: `https://ui-avatars.com/api/?name=Treinador&background=f2f4f8`
              });
         }
@@ -1379,19 +1400,27 @@ app.get('/estatisticas/elencos', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair elenco.' }); }
 });
 
-function mapPosicao(typeId) {
-    const posicoes = { 1: "Goleiro", 2: "Defensor", 3: "Meio-campo", 4: "Atacante", 5: "Treinador" };
-    return posicoes[typeId] || "Indefinido";
+// CONFIGURAÇÃO: Nova lógica dinâmica de tradução baseada no idioma selecionado
+function mapPosicao(typeId, lang) {
+    const posicoes = {
+        pt: { 1: "Goleiro", 2: "Defensor", 3: "Meio-campo", 4: "Atacante", 5: "Treinador" },
+        es: { 1: "Arquero", 2: "Defensor", 3: "Centrocampista", 4: "Delantero", 5: "Director Técnico" }
+    };
+    return posicoes[lang][typeId] || "Indefinido";
 }
 
 app.get('/estatisticas/jogador', async (req, res) => {
     try {
         const playerId = req.query.id;
+        const lang = req.query.lang === 'es' ? 'es' : 'pt';
+        const langId365 = scoresLangMap[lang];
+
         if (!playerId) return res.status(400).json({ success: false, error: 'ID do jogador não informado' });
 
-        console.log(`🏃 Buscando perfil do jogador ${playerId} no 365Scores...`);
+        console.log(`跑 Buscando perfil do jogador ${playerId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
         
-        const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
+        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL de Detalhes do Jogador
+        const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
         let resProfile = await fetch(profileUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (!resProfile.ok) throw new Error(`Status HTTP 1: ${resProfile.status}`);
@@ -1412,7 +1441,9 @@ app.get('/estatisticas/jogador', async (req, res) => {
         }
 
         console.log(`⚽ Buscando partidas reais do atleta ${playerId}...`);
-        const gamesUrl = `https://webws.365scores.com/web/athletes/games/?appTypeId=5&langId=31&timezoneName=America%2FSao_Paulo&userCountryId=21&athleteId=${playerId}`;
+        
+        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL de Partidas do Atleta
+        const gamesUrl = `https://webws.365scores.com/web/athletes/games/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&athleteId=${playerId}`;
         
         let resGames = await fetch(gamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (resGames.ok) {
@@ -1437,9 +1468,6 @@ app.get('/estatisticas/jogador', async (req, res) => {
         res.status(500).json({ success: false, error: 'Erro de comunicação' });
     }
 });
-
-app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, status: 'aguardando_gols' }));
-app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
 
 // =====================================================================
 // 9. INICIALIZAÇÃO DO SERVIDOR
