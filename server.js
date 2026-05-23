@@ -1274,12 +1274,28 @@ app.post('/trade/confirm', async (req, res) => {
 // Mapeamento de Idiomas para a API do 365Scores (31 = PT-BR, 7 = Espanhol)
 const scoresLangMap = { pt: 31, es: 7 };
 
+// CONFIGURAÇÃO DO COFRE DE CACHE (Prazo de expiração absoluto de 3 horas)
+const CACHE_TTL_ESTATISTICAS = 3 * 60 * 60 * 1000; 
+
+const estatisticasCache = {
+    standings: { pt: null, es: null, timestamp: { pt: 0, es: 0 } },
+    chaveamento: { pt: null, es: null, timestamp: { pt: 0, es: 0 } },
+    elencos: new Map(), // Chave estruturada: "teamId_lang" -> { data, timestamp }
+    jogador: new Map()  // Chave estruturada: "playerId_lang" -> { data, timestamp }
+};
+
 app.get('/estatisticas/standings', async (req, res) => {
     try {
         const lang = req.query.lang === 'es' ? 'es' : 'pt';
-        console.log(`📊 Buscando tabela oficial direto da API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
-        
-        // CONFIGURAÇÃO: Mudamos 'language=pt' para 'language=${lang}' dinâmico
+        const agora = Date.now();
+
+        // Verificação de Cache ativo de 3 horas
+        if (estatisticasCache.standings[lang] && (agora - estatisticasCache.standings.timestamp[lang] < CACHE_TTL_ESTATISTICAS)) {
+            console.log(`⚡ [Cache-Estatísticas] Servindo Classificação FIFA [${lang.toUpperCase()}] direto da memória.`);
+            return res.status(200).json(estatisticasCache.standings[lang]);
+        }
+
+        console.log(`📊 Cache expirado ou vazio! Buscando tabela oficial na API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
         const fifaUrl = `https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=${lang}&count=200`;
         const response = await fetch(fifaUrl);
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
@@ -1305,7 +1321,14 @@ app.get('/estatisticas/standings', async (req, res) => {
             });
 
             for (const grupo in tabelaLimpa) tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
-            res.status(200).json({ success: true, grupos: tabelaLimpa, status: 'ativo' });
+            
+            const respostaFinal = { success: true, grupos: tabelaLimpa, status: 'ativo' };
+            
+            // Alimenta o cache com carimbo de hora atualizado
+            estatisticasCache.standings[lang] = respostaFinal;
+            estatisticasCache.standings.timestamp[lang] = agora;
+
+            res.status(200).json(respostaFinal);
         } else {
             res.status(200).json({ success: true, grupos: {}, status: 'aguardando_sorteio' });
         }
@@ -1315,9 +1338,14 @@ app.get('/estatisticas/standings', async (req, res) => {
 app.get('/estatisticas/chaveamento', async (req, res) => {
     try {
         const lang = req.query.lang === 'es' ? 'es' : 'pt';
+        const agora = Date.now();
+
+        if (estatisticasCache.chaveamento[lang] && (agora - estatisticasCache.chaveamento.timestamp[lang] < CACHE_TTL_ESTATISTICAS)) {
+            console.log(`⚡ [Cache-Estatísticas] Servindo Chaveamento Mata-Mata direto da memória.`);
+            return res.status(200).json(estatisticasCache.chaveamento[lang]);
+        }
+
         console.log(`🌳 Buscando árvore do mata-mata na API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
-        
-        // CONFIGURAÇÃO: Mudamos 'language=pt' para 'language=${lang}' dinâmico
         const fifaStagesUrl = `https://api.fifa.com/api/v3/stages?idSeason=285023&language=${lang}`;
         const response = await fetch(fifaStagesUrl);
         if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
@@ -1327,7 +1355,12 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
 
         if (stages.length > 0) {
             const fasesEliminatorias = stages.filter(fase => !fase.IsGroupStage || fase.Name?.[0]?.Description?.toLowerCase().includes('final'));
-            res.status(200).json({ success: true, fases: fasesEliminatorias, status: 'ativo' });
+            const respostaFinal = { success: true, fases: fasesEliminatorias, status: 'ativo' };
+            
+            estatisticasCache.chaveamento[lang] = respostaFinal;
+            estatisticasCache.chaveamento.timestamp[lang] = agora;
+
+            res.status(200).json(respostaFinal);
         } else {
             res.status(200).json({ success: true, fases: [], status: 'aguardando_fase_grupos' });
         }
@@ -1338,13 +1371,22 @@ app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
         const lang = req.query.lang === 'es' ? 'es' : 'pt';
-        const langId365 = scoresLangMap[lang]; // Obtém o id de idioma correto (31 ou 7)
+        const langId365 = scoresLangMap[lang];
+        const agora = Date.now();
 
         if (!teamId) return res.json({ success: true, status: 'aguardando_selecao', selecoes: [] });
 
-        console.log(`👕 Buscando elenco do time ${teamId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
-        
-        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL do 365Scores
+        // Validação do cache usando chave composta
+        const cacheKey = `${teamId}_${lang}`;
+        if (estatisticasCache.elencos.has(cacheKey)) {
+            const cachedData = estatisticasCache.elencos.get(cacheKey);
+            if (agora - cachedData.timestamp < CACHE_TTL_ESTATISTICAS) {
+                console.log(`⚡ [Cache-Estatísticas] Servindo Elenco da seleção ${teamId} [Idioma: ${lang.toUpperCase()}] direto do Cache.`);
+                return res.status(200).json(cachedData.data);
+            }
+        }
+
+        console.log(`👕 Cache vencido! Buscando elenco do time ${teamId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
         const scoresUrl = `https://webws.365scores.com/web/squads/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&competitors=${teamId}`;
         const response = await fetch(scoresUrl);
         
@@ -1365,7 +1407,6 @@ app.get('/estatisticas/elencos', async (req, res) => {
                         if (atleta.position.isStaff || atleta.position.id === 0) {
                             pos = lang === 'es' ? "Director Técnico" : "Treinador";
                         } else {
-                            // Passamos o idioma atual para traduzir a string da posição direto no backend
                             pos = mapPosicao(atleta.position.id, lang) || atleta.position.name || "Jogador de Linha";
                         }
                     }
@@ -1396,7 +1437,12 @@ app.get('/estatisticas/elencos', async (req, res) => {
              });
         }
 
-        res.status(200).json({ success: true, status: 'ativo', elenco: elenco });
+        const respostaFinal = { success: true, status: 'ativo', elenco: elenco };
+        
+        // Armazena o registro completo no Map
+        estatisticasCache.elencos.set(cacheKey, { data: respostaFinal, timestamp: agora });
+
+        res.status(200).json(respostaFinal);
     } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair elenco.' }); }
 });
 
@@ -1414,12 +1460,20 @@ app.get('/estatisticas/jogador', async (req, res) => {
         const playerId = req.query.id;
         const lang = req.query.lang === 'es' ? 'es' : 'pt';
         const langId365 = scoresLangMap[lang];
+        const agora = Date.now();
 
         if (!playerId) return res.status(400).json({ success: false, error: 'ID do jogador não informado' });
 
-        console.log(`跑 Buscando perfil do jogador ${playerId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
-        
-        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL de Detalhes do Jogador
+        const cacheKey = `${playerId}_${lang}`;
+        if (estatisticasCache.jogador.has(cacheKey)) {
+            const cachedData = estatisticasCache.jogador.get(cacheKey);
+            if (agora - cachedData.timestamp < CACHE_TTL_ESTATISTICAS) {
+                console.log(`⚡ [Cache-Estatísticas] Servindo Atleta ${playerId} [Idioma: ${lang.toUpperCase()}] direto do Cache.`);
+                return res.status(200).json(cachedData.data);
+            }
+        }
+
+        console.log(`🏃 Buscando perfil completo do jogador ${playerId} no 365Scores [Idioma: ${lang.toUpperCase()}]...`);
         const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${playerId}`;
         
         let resProfile = await fetch(profileUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
@@ -1440,11 +1494,7 @@ app.get('/estatisticas/jogador', async (req, res) => {
             }
         }
 
-        console.log(`⚽ Buscando partidas reais do atleta ${playerId}...`);
-        
-        // CONFIGURAÇÃO: Injetamos dynamicamente o langId na URL de Partidas do Atleta
         const gamesUrl = `https://webws.365scores.com/web/athletes/games/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&athleteId=${playerId}`;
-        
         let resGames = await fetch(gamesUrl, { headers: { "User-Agent": "Mozilla/5.0", "accept": "application/json" }});
         if (resGames.ok) {
             let dataGames = await resGames.json();
@@ -1461,6 +1511,9 @@ app.get('/estatisticas/jogador', async (req, res) => {
             }
         }
 
+        // Salva os dados unificados no cache antes de responder
+        estatisticasCache.jogador.set(cacheKey, { data: dataProfile, timestamp: agora });
+
         res.status(200).json(dataProfile);
 
     } catch (error) {
@@ -1468,6 +1521,9 @@ app.get('/estatisticas/jogador', async (req, res) => {
         res.status(500).json({ success: false, error: 'Erro de comunicação' });
     }
 });
+
+app.get('/estatisticas/artilheiros', (req, res) => res.json({ success: true, status: 'aguardando_gols' }));
+app.get('/estatisticas/h2h', (req, res) => res.json({ success: true, h2h: null }));
 
 // =====================================================================
 // 9. INICIALIZAÇÃO DO SERVIDOR
