@@ -630,38 +630,63 @@ app.post('/salvar-final', async (req, res) => {
   }
 });
 
+// CORREÇÃO EXATA: Rota /ranking reestruturada com Paginação de alta performance no Backend
 app.get('/ranking', async (req, res) => {
   try {
     const agora = Date.now();
     const tempoPassado = (agora - ultimaAtualizacaoCache) / 1000 / 60;
     
-    if (rankingCache && tempoPassado < TEMPO_CACHE_MINUTOS) {
-        console.log("⚡ Servindo ranking direto do cache da memória!");
+    if (!rankingCache || tempoPassado >= TEMPO_CACHE_MINUTOS) {
+        console.log("🐌 Cache expirado. Buscando ranking mestre no Cloudant...");
+        const response = await cloudant.postFind({
+          db: DB_NAME,
+          selector: { type: { "$eq": "cartela_usuario" } },
+          limit: 2000
+        });
+
+        const rankingArray = response.result.docs.map(doc => ({
+            email: doc.user_email,
+            nome: doc.user_name,
+            pontos: doc.pontos_acumulados || 0,
+            totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
+            time_coracao: doc.time_coracao || '', 
+            recorde_embaixadinha: doc.recorde_embaixadinha || 0 
+        }));
+
+        // Ordenação mestre mantendo a sua lógica exata de desempate
+        rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
+        
+        rankingCache = rankingArray;
+        ultimaAtualizacaoCache = Date.now();
+    } else {
+        console.log("⚡ Servindo ranking consolidado da memória do servidor!");
+    }
+
+    // Lógica inteligente de fatiamento de payload por query strings (?page=1&limit=25)
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    
+    const totalItems = rankingCache.length;
+    const totalPages = Math.ceil(totalItems / limit);
+    
+    // RETROCOMPATIBILIDADE: Se o front chamar antigo sem parâmetros, manda o bloco cheio
+    if (!req.query.page) {
         return res.status(200).json({ success: true, ranking: rankingCache });
     }
 
-    console.log("🐌 Buscando ranking direto no Cloudant...");
-    const response = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" } },
-      limit: 2000
+    // Se houver parâmetros, fazemos o fatiamento seguro em memória economizando banda da Render
+    const rankingFatiado = rankingCache.slice(startIndex, endIndex);
+
+    res.status(200).json({ 
+        success: true, 
+        ranking: rankingFatiado,
+        totalItems,
+        totalPages,
+        currentPage: page
     });
-
-    const rankingArray = response.result.docs.map(doc => ({
-        email: doc.user_email,
-        nome: doc.user_name,
-        pontos: doc.pontos_acumulados || 0,
-        totalPalpites: doc.palpites_jogos ? doc.palpites_jogos.length : 0,
-        time_coracao: doc.time_coracao || '', 
-        recorde_embaixadinha: doc.recorde_embaixadinha || 0 
-    }));
-
-    rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
-    
-    rankingCache = rankingArray;
-    ultimaAtualizacaoCache = Date.now();
-
-    res.status(200).json({ success: true, ranking: rankingArray });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
   }
