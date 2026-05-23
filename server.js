@@ -31,7 +31,7 @@ const DB_NAME = 'palpites_2026';
 // =====================================================================
 // CACHE DO RANKING E MONITORAMENTO ONLINE
 // =====================================================================
-let rankingCache = null;
+let rankingCache = { pontos: null, recorde: null };
 let ultimaAtualizacaoCache = 0;
 const TEMPO_CACHE_MINUTOS = 5;
 const ID_CONTROLE_JOGOS = 'controle_processamento_jogos';
@@ -630,21 +630,23 @@ app.post('/salvar-final', async (req, res) => {
   }
 });
 
-// CORREÇÃO EXATA: Rota /ranking reestruturada com Paginação de alta performance no Backend
 app.get('/ranking', async (req, res) => {
   try {
     const agora = Date.now();
     const tempoPassado = (agora - ultimaAtualizacaoCache) / 1000 / 60;
     
-    if (!rankingCache || tempoPassado >= TEMPO_CACHE_MINUTOS) {
-        console.log("🐌 Cache expirado. Buscando ranking mestre no Cloudant...");
+    // 1. REFRESH DO COFRE: Se o cache expirou ou está vazio, reconstrói as DUAS listas ordenadas
+    if (!rankingCache.pontos || !rankingCache.recorde || tempoPassado >= TEMPO_CACHE_MINUTOS) {
+        console.log("🐌 Cache expirado. Re-processando massa de 1000 usuários no Cloudant...");
+        
         const response = await cloudant.postFind({
           db: DB_NAME,
           selector: { type: { "$eq": "cartela_usuario" } },
-          limit: 2000
+          limit: 2000 // Configurado para engolir com folga os seus 1000 usuários estimados
         });
 
-        const rankingArray = response.result.docs.map(doc => ({
+        // Mapeamento limpo da base de dados
+        const dadosBrutos = response.result.docs.map(doc => ({
             email: doc.user_email,
             nome: doc.user_name,
             pontos: doc.pontos_acumulados || 0,
@@ -653,42 +655,41 @@ app.get('/ranking', async (req, res) => {
             recorde_embaixadinha: doc.recorde_embaixadinha || 0 
         }));
 
-        // Ordenação mestre mantendo a sua lógica exata de desempate
-        rankingArray.sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
+        // GAVETA 1: Pré-ordenação global por Pontos (com desempate em palpites registrados)
+        rankingCache.pontos = [...dadosBrutos].sort((a, b) => b.pontos - a.pontos || b.totalPalpites - a.totalPalpites);
+
+        // GAVETA 2: Pré-ordenação global por Recorde de Embaixadinhas (com desempate em pontos)
+        rankingCache.recorde = [...dadosBrutos].sort((a, b) => (b.recorde_embaixadinha || 0) - (a.recorde_embaixadinha || 0) || b.pontos - a.pontos);
         
-        rankingCache = rankingArray;
         ultimaAtualizacaoCache = Date.now();
-    } else {
-        console.log("⚡ Servindo ranking consolidado da memória do servidor!");
+        console.log("🏆 [Cache Duplo] Ambas as listas (Pontos e Recordes) foram indexadas e salvas com sucesso!");
     }
 
-    // Lógica inteligente de fatiamento de payload por query strings (?page=1&limit=25)
+    // 2. CAPTURA DE PARÂMETROS DO FRONT-END
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 25;
+    const sortBy = req.query.sort || 'pontos'; // 'pontos' ou 'recorde'
     
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
-    
-    const totalItems = rankingCache.length;
-    const totalPages = Math.ceil(totalItems / limit);
-    
-    // RETROCOMPATIBILIDADE: Se o front chamar antigo sem parâmetros, manda o bloco cheio
-    if (!req.query.page) {
-        return res.status(200).json({ success: true, ranking: rankingCache });
-    }
 
-    // Se houver parâmetros, fazemos o fatiamento seguro em memória economizando banda da Render
-    const rankingFatiado = rankingCache.slice(startIndex, endIndex);
+    // 3. SELEÇÃO DA GAVETA CORRETA (Zero processamento de ordenação aqui, já está pronto!)
+    const listaPreOrdenada = sortBy === 'recorde' ? rankingCache.recorde : rankingCache.pontos;
+    const totalItems = listaPreOrdenada.length;
+
+    // 4. FATIAMENTO CIRÚRGICO DE BANDA (Envia apenas os 25 corretos daquela ordenação mestre)
+    const rankingFatiado = listaPreOrdenada.slice(startIndex, endIndex);
 
     res.status(200).json({ 
         success: true, 
         ranking: rankingFatiado,
         totalItems,
-        totalPages,
+        totalPages: Math.ceil(totalItems / limit),
         currentPage: page
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Erro ao gerar ranking' });
+    console.error("Erro crítico na rota de ranking paginado:", error);
+    res.status(500).json({ success: false, error: 'Erro interno ao processar ranking' });
   }
 });
 
