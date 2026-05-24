@@ -1546,7 +1546,7 @@ async function buscarLocalizacaoPorIp(ip) {
 }
 
 // =====================================================================
-// ROTA DE TELEMETRIA: Captura, calcula e joga no array as interações
+// ROTA DE TELEMETRIA: Monitoramento contínuo de pings ativos
 // =====================================================================
 app.post('/api/ping', (req, res) => {
     const { user_email, user_name, pagina_atual } = req.body;
@@ -1557,49 +1557,61 @@ app.post('/api/ping', (req, res) => {
     
     const obterTimestampBrasilia = () => new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
     
-    if (!dados || (agora - dados.timestamp > 5 * 60 * 1000)) {
-        // Se a sessão antiga expirou por inatividade, joga o rastro dela no array antes de resetar
-        if (dados && dados.tempoNaPagina > 2000) {
-            historicoLogsMemoria.push({ email: user_email, nome: dados.nome, pagina: dados.pagina, tempoPermanencia: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, dataHora: obterTimestampBrasilia() });
-        }
-
-        dados = { nome: user_name || user_email.split('@')[0], pagina: pagina_atual || 'index.html', timestamp: agora, sessionStart: agora, pageStart: agora, tempoNaPagina: 0, tempoTotalSite: 0, localizacao: 'Buscando...' };
+    if (!dados) {
+        // Inicializa uma nova sessão limpa do zero
+        dados = { 
+            nome: user_name || user_email.split('@')[0], 
+            pagina: pagina_atual || 'index.html', 
+            timestamp: agora, 
+            sessionStart: agora,   
+            pageStart: agora,      
+            tempoNaPagina: 0, 
+            tempoTotalSite: 0, 
+            localizacao: 'Buscando...',
+            arquivado: false // Flag de controle para o monitor de saída
+        };
         usuariosOnline.set(user_email, dados);
         buscarLocalizacaoPorIp(obterIpUsuario(req)).then(loc => { const u = usuariosOnline.get(user_email); if(u) u.localizacao = loc; });
     } else {
-        // MUDANÇA DE PÁGINA DETECTADA: Finaliza a métrica da página antiga e salva no histórico em memória
+        // Atualiza a marcação temporal de forma contínua
+        dados.tempoTotalSite = agora - dados.sessionStart;
+        
+        // MUDANÇA DE PÁGINA: Arquiva imediatamente a métrica da página que foi encerrada
         if (dados.pagina !== pagina_atual) {
             if (dados.tempoNaPagina > 1000) {
                 historicoLogsMemoria.push({ email: user_email, nome: dados.nome, pagina: dados.pagina, tempoPermanencia: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, dataHora: obterTimestampBrasilia() });
-                
-                // Trava preventiva: Mantém até 3000 linhas na RAM (Evita estouro se o servidor ficar dias sem resetar)
                 if (historicoLogsMemoria.length > 3000) historicoLogsMemoria.shift();
             }
             
             dados.pagina = pagina_atual; 
             dados.pageStart = agora; 
             dados.tempoNaPagina = 0; 
+            dados.arquivado = false; // Reseta o controle para monitorar a nova página
         } else { 
             dados.tempoNaPagina = agora - dados.pageStart; 
         }
-        dados.tempoTotalSite = agora - dados.sessionStart; 
         dados.timestamp = agora;
     }
     res.status(200).json({ success: true });
 });
 
 // =====================================================================
-// ROTA ADMIN REAL-TIME: Consolida métricas instantâneas filtráveis
+// ROTA ADMIN REAL-TIME: Força o recálculo imediato e monitora saídas do site
 // =====================================================================
 app.get('/admin/online', (req, res) => {
     const agora = Date.now();
     const limiteInatividade = 60 * 1000; // Janela ativa de 60 segundos
+    const obterTimestampBrasilia = () => new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
     
     const listaAtivos = []; const distPaginas = {}; const distGeo = {};
     let somaTempo = 0;
     
     for (const [email, dados] of usuariosOnline.entries()) {
+        // USUÁRIO ONLINE ATIVO: Força a atualização do cronômetro baseado na hora exata atual
         if (agora - dados.timestamp < limiteInatividade) {
+            dados.tempoTotalSite = agora - dados.sessionStart;
+            dados.tempoNaPagina = agora - dados.pageStart;
+
             const hB = new Date(dados.timestamp).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' });
             
             distPaginas[dados.pagina] = (distPaginas[dados.pagina] || 0) + 1;
@@ -1608,7 +1620,24 @@ app.get('/admin/online', (req, res) => {
             
             listaAtivos.push({ email, nome: dados.nome, pagina: dados.pagina, tempoNaPagina: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, ultimo_visto: hB });
         } else {
-            // Limpeza interna automática se o navegador sumir por mais de 10 minutos
+            // DETECÇÃO DE ABANDONO (FORA DO SITE): Captura o último estado antes da limpeza
+            if (!dados.arquivado) {
+                if (dados.tempoNaPagina > 1000) {
+                    historicoLogsMemoria.push({ 
+                        email, 
+                        nome: dados.nome, 
+                        pagina: dados.pagina, 
+                        tempoPermanencia: dados.tempoNaPagina, 
+                        tempoTotalSite: dados.tempoTotalSite, 
+                        localizacao: dados.localizacao, 
+                        dataHora: obterTimestampBrasilia() 
+                    });
+                    if (historicoLogsMemoria.length > 3000) historicoLogsMemoria.shift();
+                }
+                dados.arquivado = true; // Bloqueia duplicidade na próxima varredura automática
+            }
+
+            // Remove o registro da RAM apenas após 10 minutos de sumiço completo
             if (agora - dados.timestamp > 10 * 60 * 1000) {
                 usuariosOnline.delete(email);
             }
@@ -1639,7 +1668,6 @@ app.get('/admin/online', (req, res) => {
 // ROTA HISTÓRICA: Descarrega os dados acumulados direto da memória RAM
 // =====================================================================
 app.get('/admin/logs', (req, res) => {
-    // Inverte a ordem do array para que o registro mais recente encabece a planilha
     const logsInvertidos = [...historicoLogsMemoria].reverse();
     res.status(200).json({ success: true, logs: logsInvertidos });
 });
