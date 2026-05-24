@@ -473,46 +473,6 @@ app.get('/noticias', async (req, res) => {
     }
 });
 
-// =====================================================================
-// 4. ROTAS DO BOLÃO (Apostas, Cartelas e Ranking)
-// =====================================================================
-
-// ROTA DE MONITORAMENTO: Registra a batida de ponto de atividade do usuário
-app.post('/api/ping', (req, res) => {
-    const { user_email, user_name, pagina_atual } = req.body;
-    if (!user_email) return res.status(400).json({ success: false, error: 'Email requerido' });
-
-    usuariosOnline.set(user_email, {
-        nome: user_name || user_email.split('@')[0],
-        pagina: pagina_atual || 'index.html',
-        timestamp: Date.now()
-    });
-
-    res.status(200).json({ success: true });
-});
-
-// ROTA ADMIN AVULSA: Retorna quem está ativo nos últimos 60 segundos
-app.get('/admin/online', (req, res) => {
-    const agora = Date.now();
-    const limiteInatividade = 60 * 1000; // 1 minuto de tolerância
-    const listaFinal = [];
-
-    for (const [email, dados] of usuariosOnline.entries()) {
-        if (agora - dados.timestamp < limiteInatividade) {
-            listaFinal.push({
-                email,
-                nome: dados.nome,
-                pagina: dados.pagina,
-                ultimo_visto: new Date(dados.timestamp).toLocaleTimeString('pt-BR')
-            });
-        } else {
-            usuariosOnline.delete(email); // Limpeza automática de usuários inativos
-        }
-    }
-
-    res.status(200).json({ success: true, total_online: listaFinal.length, usuarios: listaFinal });
-});
-
 app.post('/salvar-lote', async (req, res) => {
   try {
     const { user_email, user_name, palpites } = req.body;
@@ -1546,6 +1506,150 @@ app.get('/estatisticas/jogador', async (req, res) => {
         console.error("❌ Erro ao buscar jogador:", error);
         res.status(500).json({ success: false, error: 'Erro de comunicação' });
     }
+});
+
+// =====================================================================
+// METADADOS E HELPERS DO MONITOR ANALYTICS
+// =====================================================================
+const geoCache = new Map(); 
+let analyticsMestres = {
+    picoMaximo: 0,
+    historicoPicos: []
+};
+
+// HELPER: Detecta o IP real do usuário ignorando os proxies da Render
+function obterIpUsuario(req) {
+    const forwarder = req.headers['x-forwarded-for'];
+    if (forwarder) return forwarder.split(',')[0].trim();
+    return req.ip || req.connection.remoteAddress || '127.0.0.1';
+}
+
+// HELPER: Consulta a localização do IP em segundo plano (Não bloqueante)
+async function buscarLocalizacaoPorIp(ip) {
+    if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('::ffff:127')) return 'Localhost (Dev)';
+    if (ip.startsWith('10.') || ip.startsWith('9.')) return 'IBM Internal Network (VPN)';
+    if (geoCache.has(ip)) return geoCache.get(ip);
+    try {
+        const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city`);
+        if (res.ok) {
+            const geo = await res.json();
+            if (geo.status === 'success') {
+                const localFormatado = `${geo.city}, ${geo.regionName} - ${geo.country}`;
+                geoCache.set(ip, localFormatado);
+                return localFormatado;
+            }
+        }
+    } catch (e) { console.log(`⚠️ Falha geográfica do IP ${ip}`); }
+    return 'Desconhecido';
+}
+
+// =====================================================================
+// ROTA DE TELEMETRIA: Captura e calcula o tempo de engajamento por página
+// =====================================================================
+app.post('/api/ping', (req, res) => {
+    const { user_email, user_name, pagina_atual } = req.body;
+    if (!user_email) return res.status(400).json({ success: false });
+    
+    const agora = Date.now();
+    let dados = usuariosOnline.get(user_email);
+    
+    if (!dados || (agora - dados.timestamp > 5 * 60 * 1000)) {
+        dados = { 
+            nome: user_name || user_email.split('@')[0], 
+            pagina: pagina_atual || 'index.html', 
+            timestamp: agora, 
+            sessionStart: agora,   
+            pageStart: agora,      
+            tempoNaPagina: 0, 
+            tempoTotalSite: 0, 
+            localizacao: 'Buscando...' 
+        };
+        usuariosOnline.set(user_email, dados);
+        buscarLocalizacaoPorIp(obterIpUsuario(req)).then(loc => { 
+            const u = usuariosOnline.get(user_email); 
+            if(u) u.localizacao = loc; 
+        });
+    } else {
+        if (dados.pagina !== pagina_atual) { 
+            dados.pagina = pagina_atual; 
+            dados.pageStart = agora; 
+            dados.tempoNaPagina = 0; 
+        } else { 
+            dados.tempoNaPagina = agora - dados.pageStart; 
+        }
+        dados.tempoTotalSite = agora - dados.sessionStart; 
+        dados.timestamp = agora;
+    }
+    res.status(200).json({ success: true });
+});
+
+// =====================================================================
+// ROTA ADMIN: Consolida métricas analíticas e corrige fuso para GMT -03:00
+// =====================================================================
+app.get('/admin/online', (req, res) => {
+    const agora = Date.now();
+    const limiteInatividade = 60 * 1000; 
+    
+    const listaAtivos = []; 
+    const distPaginas = {}; 
+    const distGeo = {};
+    let somaTempo = 0;
+    
+    for (const [email, dados] of usuariosOnline.entries()) {
+        if (agora - dados.timestamp < limiteInatividade) {
+            // CORREÇÃO DEFINITIVA DO HORÁRIO: Forçando o fuso de Brasília (GMT -03:00)
+            const hB = new Date(dados.timestamp).toLocaleTimeString('pt-BR', { 
+                timeZone: 'America/Sao_Paulo', 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+            });
+            
+            distPaginas[dados.pagina] = (distPaginas[dados.pagina] || 0) + 1;
+            distGeo[dados.localizacao] = (distGeo[dados.localizacao] || 0) + 1;
+            somaTempo += dados.tempoTotalSite;
+            
+            listaAtivos.push({ 
+                email, 
+                nome: dados.nome, 
+                pagina: dados.pagina, 
+                tempoNaPagina: dados.tempoNaPagina, 
+                tempoTotalSite: dados.tempoTotalSite, 
+                localizacao: dados.localizacao, 
+                ultimo_visto: hB 
+            });
+        } else {
+            // Limpeza automática de usuários inativos há mais de 10 minutos
+            if (agora - dados.timestamp > 10 * 60 * 1000) {
+                usuariosOnline.delete(email);
+            }
+        }
+    }
+    
+    const totalOnline = listaAtivos.length; // Correção estrita do erro de digitação
+    if (totalOnline > analyticsMestres.picoMaximo) analyticsMestres.picoMaximo = totalOnline;
+    
+    let localTop = '--'; 
+    let maxGeo = 0;
+    for (const [loc, count] of Object.entries(distGeo)) { 
+        if (count > maxGeo && loc !== 'Buscando...') { 
+            maxGeo = count; 
+            localTop = loc; 
+        } 
+    }
+    
+    res.status(200).json({ 
+        success: true, 
+        total_online: totalOnline, 
+        usuarios: listaAtivos, 
+        metrics: { 
+            tempoMedioGlobal: totalOnline > 0 ? Math.floor(somaTempo / totalOnline) : 0, 
+            localMaisAtivo: localTop, 
+            picoMaximo: analyticsMestres.picoMaximo, 
+            distribuicaoPaginas: distPaginas, 
+            distribuicaoGeografica: distGeo 
+        } 
+    });
 });
 
 // =====================================================================
