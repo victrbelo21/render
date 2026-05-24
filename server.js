@@ -1600,7 +1600,7 @@ app.post('/api/ping', (req, res) => {
 // =====================================================================
 app.get('/admin/online', (req, res) => {
     const agora = Date.now();
-    const limiteInatividade = 60 * 1000; // Janela ativa de 60 segundos
+    const limiteInatividade = 40 * 1000; // Janela ativa de 60 segundos
     const obterTimestampBrasilia = () => new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
     
     const listaAtivos = []; const distPaginas = {}; const distGeo = {};
