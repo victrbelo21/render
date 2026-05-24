@@ -1509,22 +1509,24 @@ app.get('/estatisticas/jogador', async (req, res) => {
 });
 
 // =====================================================================
-// METADADOS E HELPERS DO MONITOR ANALYTICS
+// METADADOS, ARRAYS HISTÓRICOS E HELPERS DO MONITOR ANALYTICS
 // =====================================================================
 const geoCache = new Map(); 
+let historicoLogsMemoria = []; // Array volátil para armazenar logs históricos sem custos
+
 let analyticsMestres = {
     picoMaximo: 0,
     historicoPicos: []
 };
 
-// HELPER: Detecta o IP real do usuário ignorando os proxies da Render
+// HELPER: Detecta o IP real do usuário ignorando os proxies de redirecionamento da Render
 function obterIpUsuario(req) {
     const forwarder = req.headers['x-forwarded-for'];
     if (forwarder) return forwarder.split(',')[0].trim();
     return req.ip || req.connection.remoteAddress || '127.0.0.1';
 }
 
-// HELPER: Consulta a localização do IP em segundo plano (Não bloqueante)
+// HELPER: Consulta a localização do IP em segundo plano (Não bloqueante para o usuário)
 async function buscarLocalizacaoPorIp(ip) {
     if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('::ffff:127')) return 'Localhost (Dev)';
     if (ip.startsWith('10.') || ip.startsWith('9.')) return 'IBM Internal Network (VPN)';
@@ -1544,7 +1546,7 @@ async function buscarLocalizacaoPorIp(ip) {
 }
 
 // =====================================================================
-// ROTA DE TELEMETRIA: Captura e calcula o tempo de engajamento por página
+// ROTA DE TELEMETRIA: Captura, calcula e joga no array as interações
 // =====================================================================
 app.post('/api/ping', (req, res) => {
     const { user_email, user_name, pagina_atual } = req.body;
@@ -1553,24 +1555,27 @@ app.post('/api/ping', (req, res) => {
     const agora = Date.now();
     let dados = usuariosOnline.get(user_email);
     
+    const obterTimestampBrasilia = () => new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    
     if (!dados || (agora - dados.timestamp > 5 * 60 * 1000)) {
-        dados = { 
-            nome: user_name || user_email.split('@')[0], 
-            pagina: pagina_atual || 'index.html', 
-            timestamp: agora, 
-            sessionStart: agora,   
-            pageStart: agora,      
-            tempoNaPagina: 0, 
-            tempoTotalSite: 0, 
-            localizacao: 'Buscando...' 
-        };
+        // Se a sessão antiga expirou por inatividade, joga o rastro dela no array antes de resetar
+        if (dados && dados.tempoNaPagina > 2000) {
+            historicoLogsMemoria.push({ email: user_email, nome: dados.nome, pagina: dados.pagina, tempoPermanencia: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, dataHora: obterTimestampBrasilia() });
+        }
+
+        dados = { nome: user_name || user_email.split('@')[0], pagina: pagina_atual || 'index.html', timestamp: agora, sessionStart: agora, pageStart: agora, tempoNaPagina: 0, tempoTotalSite: 0, localizacao: 'Buscando...' };
         usuariosOnline.set(user_email, dados);
-        buscarLocalizacaoPorIp(obterIpUsuario(req)).then(loc => { 
-            const u = usuariosOnline.get(user_email); 
-            if(u) u.localizacao = loc; 
-        });
+        buscarLocalizacaoPorIp(obterIpUsuario(req)).then(loc => { const u = usuariosOnline.get(user_email); if(u) u.localizacao = loc; });
     } else {
-        if (dados.pagina !== pagina_atual) { 
+        // MUDANÇA DE PÁGINA DETECTADA: Finaliza a métrica da página antiga e salva no histórico em memória
+        if (dados.pagina !== pagina_atual) {
+            if (dados.tempoNaPagina > 1000) {
+                historicoLogsMemoria.push({ email: user_email, nome: dados.nome, pagina: dados.pagina, tempoPermanencia: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, dataHora: obterTimestampBrasilia() });
+                
+                // Trava preventiva: Mantém até 3000 linhas na RAM (Evita estouro se o servidor ficar dias sem resetar)
+                if (historicoLogsMemoria.length > 3000) historicoLogsMemoria.shift();
+            }
+            
             dados.pagina = pagina_atual; 
             dados.pageStart = agora; 
             dados.tempoNaPagina = 0; 
@@ -1584,59 +1589,37 @@ app.post('/api/ping', (req, res) => {
 });
 
 // =====================================================================
-// ROTA ADMIN: Consolida métricas analíticas e corrige fuso para GMT -03:00
+// ROTA ADMIN REAL-TIME: Consolida métricas instantâneas filtráveis
 // =====================================================================
 app.get('/admin/online', (req, res) => {
     const agora = Date.now();
-    const limiteInatividade = 60 * 1000; 
+    const limiteInatividade = 60 * 1000; // Janela ativa de 60 segundos
     
-    const listaAtivos = []; 
-    const distPaginas = {}; 
-    const distGeo = {};
+    const listaAtivos = []; const distPaginas = {}; const distGeo = {};
     let somaTempo = 0;
     
     for (const [email, dados] of usuariosOnline.entries()) {
         if (agora - dados.timestamp < limiteInatividade) {
-            // CORREÇÃO DEFINITIVA DO HORÁRIO: Forçando o fuso de Brasília (GMT -03:00)
-            const hB = new Date(dados.timestamp).toLocaleTimeString('pt-BR', { 
-                timeZone: 'America/Sao_Paulo', 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-            });
+            const hB = new Date(dados.timestamp).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' });
             
             distPaginas[dados.pagina] = (distPaginas[dados.pagina] || 0) + 1;
             distGeo[dados.localizacao] = (distGeo[dados.localizacao] || 0) + 1;
             somaTempo += dados.tempoTotalSite;
             
-            listaAtivos.push({ 
-                email, 
-                nome: dados.nome, 
-                pagina: dados.pagina, 
-                tempoNaPagina: dados.tempoNaPagina, 
-                tempoTotalSite: dados.tempoTotalSite, 
-                localizacao: dados.localizacao, 
-                ultimo_visto: hB 
-            });
+            listaAtivos.push({ email, nome: dados.nome, pagina: dados.pagina, tempoNaPagina: dados.tempoNaPagina, tempoTotalSite: dados.tempoTotalSite, localizacao: dados.localizacao, ultimo_visto: hB });
         } else {
-            // Limpeza automática de usuários inativos há mais de 10 minutos
+            // Limpeza interna automática se o navegador sumir por mais de 10 minutos
             if (agora - dados.timestamp > 10 * 60 * 1000) {
                 usuariosOnline.delete(email);
             }
         }
     }
     
-    const totalOnline = listaAtivos.length; // Correção estrita do erro de digitação
+    const totalOnline = listaAtivos.length; 
     if (totalOnline > analyticsMestres.picoMaximo) analyticsMestres.picoMaximo = totalOnline;
     
-    let localTop = '--'; 
-    let maxGeo = 0;
-    for (const [loc, count] of Object.entries(distGeo)) { 
-        if (count > maxGeo && loc !== 'Buscando...') { 
-            maxGeo = count; 
-            localTop = loc; 
-        } 
-    }
+    let localTop = '--'; let maxGeo = 0;
+    for (const [loc, count] of Object.entries(distGeo)) { if (count > maxGeo && loc !== 'Buscando...') { maxGeo = count; localTop = loc; } }
     
     res.status(200).json({ 
         success: true, 
@@ -1650,6 +1633,15 @@ app.get('/admin/online', (req, res) => {
             distribuicaoGeografica: distGeo 
         } 
     });
+});
+
+// =====================================================================
+// ROTA HISTÓRICA: Descarrega os dados acumulados direto da memória RAM
+// =====================================================================
+app.get('/admin/logs', (req, res) => {
+    // Inverte a ordem do array para que o registro mais recente encabece a planilha
+    const logsInvertidos = [...historicoLogsMemoria].reverse();
+    res.status(200).json({ success: true, logs: logsInvertidos });
 });
 
 // =====================================================================
