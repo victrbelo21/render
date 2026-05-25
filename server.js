@@ -1258,7 +1258,7 @@ app.post('/trade/confirm', async (req, res) => {
 // =====================================================================
 
 // Mapeamento de Idiomas para a API do 365Scores (31 = PT-BR, 7 = Espanhol)
-const scoresLangMap = { pt: 31, es: 7 };
+const scoresLangMap = { pt: 31, es: 14 };
 
 // CONFIGURAÇÃO DO COFRE DE CACHE (Prazo de expiração absoluto de 3 horas)
 const CACHE_TTL_ESTATISTICAS = 3 * 60 * 60 * 1000; 
