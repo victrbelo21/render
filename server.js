@@ -1353,6 +1353,48 @@ app.get('/estatisticas/chaveamento', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair o chaveamento.' }); }
 });
 
+async function buscarPosicoesDetalhadasEmLote(playerIds, langId365) {
+    if (!playerIds || playerIds.length === 0) return new Map();
+
+    const mapa = new Map();
+
+    try {
+        const ids = playerIds.filter(Boolean).join(',');
+
+        const profileUrl = `https://webws.365scores.com/web/athletes/?appTypeId=5&langId=${langId365}&timezoneName=America%2FSao_Paulo&userCountryId=21&fullDetails=true&athletes=${ids}`;
+
+        const response = await fetch(profileUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "accept": "application/json"
+            }
+        });
+
+        if (!response.ok) {
+            console.warn(`⚠️ Não foi possível buscar posições detalhadas em lote. Status: ${response.status}`);
+            return mapa;
+        }
+
+        const data = await response.json();
+
+        (data.athletes || []).forEach((athlete) => {
+            const posicaoDetalhada =
+                athlete.formationPosition?.name ||
+                athlete.position?.name ||
+                null;
+
+            if (athlete.id && posicaoDetalhada) {
+                mapa.set(String(athlete.id), posicaoDetalhada);
+            }
+        });
+
+        return mapa;
+    } catch (error) {
+        console.warn('⚠️ Erro ao buscar posições detalhadas em lote:', error.message);
+        return mapa;
+    }
+}
+
 app.get('/estatisticas/elencos', async (req, res) => {
     try {
         const teamId = req.query.teamId;
@@ -1383,36 +1425,49 @@ app.get('/estatisticas/elencos', async (req, res) => {
         let treinadorEncontrado = false;
 
         if (data.squads && data.squads.length > 0) {
-            const squadDoTime = data.squads.find(s => s.competitorId == teamId) || data.squads[0];
-            if (squadDoTime && squadDoTime.athletes) {
-                squadDoTime.athletes.forEach(atleta => {
-                    const nascimento = atleta.birthdate ? atleta.birthdate.split('-')[0] : '-';
-                    let pos = "Indefinido";
-                    
-                    if (atleta.position) {
-                        if (atleta.position.isStaff || atleta.position.id === 0) {
-                            pos = lang === 'es' ? "Director Técnico" : "Treinador";
-                        } else {
-                            pos = mapPosicao(atleta.position.id, lang) || atleta.position.name || "Jogador de Linha";
-                        }
-                    }
+    const squadDoTime = data.squads.find(s => s.competitorId == teamId) || data.squads[0];
 
-                    const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
-                    const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
+    if (squadDoTime && squadDoTime.athletes) {
+        const atletas = squadDoTime.athletes;
 
-                    elenco.push({
-                        id: atleta.id,
-                        nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
-                        posicao: pos, 
-                        nascimento: nascimento,
-                        camisa: camisaNum,
-                        foto: `https://imagecache.365scores.com/image/upload/f_png,w_80,h_80,c_limit,q_auto:eco,dpr_2,d_Athletes:${atleta.id}.png,r_max,c_thumb,g_face,z_0.65/${imgVersion}Athletes/NationalTeam/${atleta.id}`
-                    });
+        const idsJogadores = atletas
+            .filter(atleta => atleta.position && !atleta.position.isStaff && atleta.position.id !== 0)
+            .map(atleta => atleta.id)
+            .filter(Boolean);
 
-                    if (atleta.position && (atleta.position.isStaff || atleta.position.id === 0)) treinadorEncontrado = true;
-                });
+        const posicoesDetalhadasMap = await buscarPosicoesDetalhadasEmLote(idsJogadores, langId365);
+
+        atletas.forEach(atleta => {
+            const nascimento = atleta.birthdate ? atleta.birthdate.split('-')[0] : '-';
+            let pos = "Indefinido";
+            let posicaoDetalhada = null;
+            
+            if (atleta.position) {
+                if (atleta.position.isStaff || atleta.position.id === 0) {
+                    pos = lang === 'es' ? "Director Técnico" : "Treinador";
+                } else {
+                    pos = mapPosicao(atleta.position.id, lang) || atleta.position.name || "Jogador de Linha";
+                    posicaoDetalhada = posicoesDetalhadasMap.get(String(atleta.id)) || pos;
+                }
             }
-        }
+
+            const camisaNum = (atleta.jerseyNum && atleta.jerseyNum !== -1) ? atleta.jerseyNum : '-';
+            const imgVersion = atleta.imageVersion ? `v${atleta.imageVersion}/` : '';
+
+            elenco.push({
+                id: atleta.id,
+                nome: atleta.nameForURL ? atleta.nameForURL.replace(/-/g, ' ') : (atleta.name || "Atleta"),
+                posicao: pos,
+                posicaoDetalhada: posicaoDetalhada || pos,
+                nascimento: nascimento,
+                camisa: camisaNum,
+                foto: `https://imagecache.365scores.com/image/upload/f_png,w_80,h_80,c_limit,q_auto:eco,dpr_2,d_Athletes:${atleta.id}.png,r_max,c_thumb,g_face,z_0.65/${imgVersion}Athletes/NationalTeam/${atleta.id}`
+            });
+
+            if (atleta.position && (atleta.position.isStaff || atleta.position.id === 0)) treinadorEncontrado = true;
+        });
+    }
+}
 
         if (!treinadorEncontrado && elenco.length > 0) {
              elenco.push({
