@@ -304,7 +304,7 @@ cron.schedule('*/10 * * * *', async () => {
                     const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
                     
                     let placarReal1 = ordreExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
-                    let placarReal2 = ordreExata ? fontFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
+                    let placarReal2 = ordreExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
 
                     const precisaCalcular = jogosOficiais.some(jo => jo.id === jogoFinalizado.id);
                     
