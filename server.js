@@ -751,7 +751,7 @@ app.post('/abrir-pacote', async (req, res) => {
         });
 
         const userDoc = searchResponse.result.docs[0];
-        if (!userDoc) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+        if (!userDoc) return res.status(404).json({ success: false, error: 'Usuário não encontrado. Faça um palpite antes.' });
 
         if (!userDoc.album) {
             userDoc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
