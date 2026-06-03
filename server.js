@@ -188,8 +188,29 @@ cron.schedule('*/14 * * * *', async () => {
 });
 
 // TRABALHADOR INVISÍVEL - Recálculo Contínuo de Resultados
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('*/30 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
+
+    const aguardar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const salvarDocumentosEmLotes = async (documentos, tamanhoLote = 8, pausaMs = 1200) => {
+        for (let i = 0; i < documentos.length; i += tamanhoLote) {
+            const lote = documentos.slice(i, i + tamanhoLote);
+            const numeroLote = Math.floor(i / tamanhoLote) + 1;
+            const totalLotes = Math.ceil(documentos.length / tamanhoLote);
+
+            console.log(`💾 Salvando lote ${numeroLote}/${totalLotes} com ${lote.length} documento(s)...`);
+
+            await cloudant.postBulkDocs({
+                db: DB_NAME,
+                bulkDocs: { docs: lote }
+            });
+
+            if (i + tamanhoLote < documentos.length) {
+                await aguardar(pausaMs);
+            }
+        }
+    };
     
     try {
         let controleDoc;
@@ -372,9 +393,15 @@ cron.schedule('*/10 * * * *', async () => {
         });
 
         if (documentosParaAtualizar.length > 0) {
-            if (controleModificado) documentosParaAtualizar.push(controleDoc);
-            await cloudant.postBulkDocs({ db: DB_NAME, bulkDocs: { docs: documentosParaAtualizar } });
-            console.log(`📦 Atualização/Rollback concluído! ${documentosParaAtualizar.length} documentos salvos.`);
+            const documentosParaSalvar = [...documentosParaAtualizar];
+
+            if (controleModificado) {
+                documentosParaSalvar.push(controleDoc);
+            }
+
+            await salvarDocumentosEmLotes(documentosParaSalvar, 8, 1200);
+
+            console.log(`📦 Atualização/Rollback concluído! ${documentosParaSalvar.length} documentos salvos em lotes.`);
         } else if (controleModificado) {
             await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
             console.log('✅ Jogos registrados no controle. Nenhuma cartela sofreu alteração.');
