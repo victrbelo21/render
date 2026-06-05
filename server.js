@@ -45,6 +45,60 @@ const usuariosOnline = new Map();
 const noticiasCache = { pt: null, es: null };
 const ultimaDataNoticias = { pt: "", es: "" };
 
+// =====================================================================
+// DICIONÁRIO DE TRADUÇÕES DO SERVIDOR
+// =====================================================================
+const serverMessages = {
+    pt: {
+        invalid_data: 'Dados inválidos.',
+        deadline_expired: 'Prazo encerrado para os palpites enviados. Alterações recusadas pelo servidor.',
+        user_not_found_make_guess: 'Usuário não encontrado. Faça um palpite antes.',
+        pack_already_opened: 'O carteiro só passa ao meio-dia. Volte mais tarde!',
+        incomplete_data: 'Dados incompletos.',
+        invalid_trade: 'Troca inválida.',
+        card_not_found: 'Cartela não encontrada.',
+        sticker_unavailable: 'Figurinha indisponível.',
+        proposal_exists: 'Proposta já existente.',
+        user_not_informed: 'Usuário não informado.',
+        proposal_unavailable: 'Proposta não disponível.',
+        invalid_action: 'Ação inválida.',
+        already_counteroffered: 'Já contraofertada.',
+        access_denied: 'Acesso negado.',
+        invalid_sticker: 'Figurinha inválida.',
+        confirmation_unavailable: 'Confirmação indisponível.',
+        incomplete_trade: 'Troca incompleta.',
+        cards_not_found: 'Cartelas não encontradas.',
+        stickers_unavailable: 'Figurinha(s) não disponível(is).'
+    },
+    es: {
+        invalid_data: 'Datos inválidos.',
+        deadline_expired: 'Plazo vencido para las predicciones enviadas. Cambios rechazados por el servidor.',
+        user_not_found_make_guess: 'Usuario no encontrado. Haz una predicción primero.',
+        pack_already_opened: '¡El cartero solo pasa al mediodía. Vuelve más tarde!',
+        incomplete_data: 'Datos incompletos.',
+        invalid_trade: 'Intercambio inválido.',
+        card_not_found: 'Boleto no encontrado.',
+        sticker_unavailable: 'Cromo no disponible.',
+        proposal_exists: 'Propuesta ya existente.',
+        user_not_informed: 'Usuario no informado.',
+        proposal_unavailable: 'Propuesta no disponible.',
+        invalid_action: 'Acción inválida.',
+        already_counteroffered: 'Ya contraofertada.',
+        access_denied: 'Acceso denegado.',
+        invalid_sticker: 'Cromo inválido.',
+        confirmation_unavailable: 'Confirmación no disponible.',
+        incomplete_trade: 'Intercambio incompleto.',
+        cards_not_found: 'Boletos no encontrados.',
+        stickers_unavailable: 'Cromo(s) no disponible(s).'
+    }
+};
+
+// Função auxiliar para obter mensagem traduzida
+const getMsg = (key, lang = 'pt') => {
+    const validLang = (lang === 'es') ? 'es' : 'pt';
+    return serverMessages[validLang][key] || serverMessages.pt[key] || key;
+};
+
 // URLs das APIs secretas da FIFA por idioma
 const fifaEndpoints = {
     pt: "https://cxm-api.fifa.com/fifaplusweb/api/sections/news/1aQDyhkYnKhkAW347zYi4Y?locale=pt&limit=16&skip=0",
@@ -504,8 +558,9 @@ app.post('/salvar-lote', async (req, res) => {
   try {
     const { user_email, user_name, palpites } = req.body;
 
+    const { lang } = req.body;
     if (!user_email || !palpites) {
-        return res.status(400).json({ success: false, error: 'Dados inválidos.' });
+        return res.status(400).json({ success: false, error: getMsg('invalid_data', lang) });
     }
 
     const searchResponse = await cloudant.postFind({
@@ -555,7 +610,7 @@ app.post('/salvar-lote', async (req, res) => {
     });
 
     if (modificacoesValidas === 0 && palpites.length > 0) {
-        return res.status(400).json({ success: false, error: 'Prazo encerrado para os palpites enviados. Alterações recusadas pelo servidor.' });
+        return res.status(400).json({ success: false, error: getMsg('deadline_expired', lang) });
     }
 
     if (existingDoc) {
@@ -770,7 +825,7 @@ app.post('/atualizar-wishlist', async (req, res) => {
 
 app.post('/abrir-pacote', async (req, res) => {
     try {
-        const { user_email } = req.body;
+        const { user_email, lang } = req.body;
         
         const searchResponse = await cloudant.postFind({
             db: DB_NAME,
@@ -778,7 +833,7 @@ app.post('/abrir-pacote', async (req, res) => {
         });
 
         const userDoc = searchResponse.result.docs[0];
-        if (!userDoc) return res.status(404).json({ success: false, error: 'Usuário não encontrado. Faça um palpite antes.' });
+        if (!userDoc) return res.status(404).json({ success: false, error: getMsg('user_not_found_make_guess', lang) });
 
         if (!userDoc.album) {
             userDoc.album = { coladas: [], repetidas: [], ultimo_pacotinho: null };
@@ -797,7 +852,7 @@ app.post('/abrir-pacote', async (req, res) => {
         const cicloAtual = `${ano}-${mes}-${dia}`;
         
         if (userDoc.album.ultimo_pacotinho === cicloAtual) {
-            return res.status(400).json({ success: false, error: 'O carteiro só passa ao meio-dia. Volte mais tarde!' });
+            return res.status(400).json({ success: false, error: getMsg('pack_already_opened', lang) });
         }
 
         const figurinhasSorteadas = [];
@@ -1126,21 +1181,21 @@ function ordenarTrocasMaisRecentes(a, b) {
 
 app.post('/trade/propose', async (req, res) => {
     try {
-        const { proponente_email, proponente_nome, parceiro_email, parceiro_nome, fig_id } = req.body;
+        const { proponente_email, proponente_nome, parceiro_email, parceiro_nome, fig_id, lang } = req.body;
         const proponenteFigId = parseInt(fig_id, 10);
 
-        if (!proponente_email || !parceiro_email || !proponenteFigId) return res.status(400).json({ success: false, error: "Dados incompletos." });
-        if (proponente_email === parceiro_email) return res.status(400).json({ success: false, error: "Troca inválida." });
+        if (!proponente_email || !parceiro_email || !proponenteFigId) return res.status(400).json({ success: false, error: getMsg('incomplete_data', lang) });
+        if (proponente_email === parceiro_email) return res.status(400).json({ success: false, error: getMsg('invalid_trade', lang) });
 
         const docProponente = await buscarCartelaUsuario(proponente_email);
         const docParceiro = await buscarCartelaUsuario(parceiro_email);
 
-        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: "Cartela não encontrada." });
+        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: getMsg('card_not_found', lang) });
 
         garantirAlbumValido(docProponente);
         garantirAlbumValido(docParceiro);
 
-        if (!possuiRepetida(docProponente, proponenteFigId)) return res.status(400).json({ success: false, error: "Figurinha indisponível." });
+        if (!possuiRepetida(docProponente, proponenteFigId)) return res.status(400).json({ success: false, error: getMsg('sticker_unavailable', lang) });
 
         const buscaDuplicada = await cloudant.postFind({
             db: DB_NAME,
@@ -1150,7 +1205,7 @@ app.post('/trade/propose', async (req, res) => {
             }
         });
 
-        if (buscaDuplicada.result.docs.length > 0) return res.status(400).json({ success: false, error: "Proposta já existente." });
+        if (buscaDuplicada.result.docs.length > 0) return res.status(400).json({ success: false, error: getMsg('proposal_exists', lang) });
 
         const agora = new Date().toISOString();
         const proposta = {
@@ -1167,8 +1222,8 @@ app.post('/trade/propose', async (req, res) => {
 
 app.post('/trade/inbox', async (req, res) => {
     try {
-        const { user_email } = req.body;
-        if (!user_email) return res.status(400).json({ success: false, error: "Usuário não informado." });
+        const { user_email, lang } = req.body;
+        if (!user_email) return res.status(400).json({ success: false, error: getMsg('user_not_informed', lang) });
 
         const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
 
@@ -1194,13 +1249,13 @@ app.post('/trade/inbox', async (req, res) => {
 
 app.post('/trade/respond', async (req, res) => {
     try {
-        const { proposta_id, acao, user_email, minha_fig_id } = req.body;
-        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
+        const { proposta_id, acao, user_email, minha_fig_id, lang } = req.body;
+        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: getMsg('incomplete_data', lang) });
 
         const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
         const statusAbertos = ["aguardando_contraoferta", "aguardando_confirmacao"];
 
-        if (!statusAbertos.includes(proposta.status)) return res.status(400).json({ success: false, error: "Proposta não disponível." });
+        if (!statusAbertos.includes(proposta.status)) return res.status(400).json({ success: false, error: getMsg('proposal_unavailable', lang) });
 
         if (acao === "recusar" || acao === "cancelar") {
             proposta.status = acao === "cancelar" ? "cancelada" : "recusada";
@@ -1209,15 +1264,15 @@ app.post('/trade/respond', async (req, res) => {
             return res.json({ success: true, message: "Proposta atualizada." });
         }
 
-        if (acao !== "contraofertar") return res.status(400).json({ success: false, error: "Ação inválida." });
-        if (proposta.status !== "aguardando_contraoferta") return res.status(400).json({ success: false, error: "Já contraofertada." });
-        if (user_email && user_email !== proposta.parceiro_email) return res.status(403).json({ success: false, error: "Acesso negado." });
+        if (acao !== "contraofertar") return res.status(400).json({ success: false, error: getMsg('invalid_action', lang) });
+        if (proposta.status !== "aguardando_contraoferta") return res.status(400).json({ success: false, error: getMsg('already_counteroffered', lang) });
+        if (user_email && user_email !== proposta.parceiro_email) return res.status(403).json({ success: false, error: getMsg('access_denied', lang) });
 
         const parceiroFigId = parseInt(minha_fig_id, 10);
-        if (!parceiroFigId) return res.status(400).json({ success: false, error: "Figurinha inválida." });
+        if (!parceiroFigId) return res.status(400).json({ success: false, error: getMsg('invalid_sticker', lang) });
 
         const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
-        if (!docParceiro || !possuiRepetida(docParceiro, parceiroFigId)) return res.status(400).json({ success: false, error: "Figurinha indisponível." });
+        if (!docParceiro || !possuiRepetida(docParceiro, parceiroFigId)) return res.status(400).json({ success: false, error: getMsg('sticker_unavailable', lang) });
 
         proposta.parceiro_fig_id = parceiroFigId;
         proposta.status = "aguardando_confirmacao";
@@ -1230,12 +1285,12 @@ app.post('/trade/respond', async (req, res) => {
 
 app.post('/trade/confirm', async (req, res) => {
     try {
-        const { proposta_id, user_email, acao } = req.body;
-        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: "Dados incompletos." });
+        const { proposta_id, user_email, acao, lang } = req.body;
+        if (!proposta_id || !acao) return res.status(400).json({ success: false, error: getMsg('incomplete_data', lang) });
 
         const proposta = (await cloudant.getDocument({ db: DB_NAME, docId: proposta_id })).result;
-        if (user_email && user_email !== proposta.proponente_email) return res.status(403).json({ success: false, error: "Acesso negado." });
-        if (proposta.status !== "aguardando_confirmacao") return res.status(400).json({ success: false, error: "Confirmação indisponível." });
+        if (user_email && user_email !== proposta.proponente_email) return res.status(403).json({ success: false, error: getMsg('access_denied', lang) });
+        if (proposta.status !== "aguardando_confirmacao") return res.status(400).json({ success: false, error: getMsg('confirmation_unavailable', lang) });
 
         if (acao === "recusar" || acao === "cancelar") {
             proposta.status = acao === "cancelar" ? "cancelada" : "recusada_pelo_proponente";
@@ -1244,17 +1299,17 @@ app.post('/trade/confirm', async (req, res) => {
             return res.json({ success: true, message: "Troca encerrada." });
         }
 
-        if (acao !== "confirmar") return res.status(400).json({ success: false, error: "Ação inválida." });
+        if (acao !== "confirmar") return res.status(400).json({ success: false, error: getMsg('invalid_action', lang) });
 
         const proponenteFigId = parseInt(proposta.proponente_fig_id || proposta.fig_id, 10);
         const parceiroFigId = parseInt(proposta.parceiro_fig_id, 10);
 
-        if (!proponenteFigId || !parceiroFigId) return res.status(400).json({ success: false, error: "Troca incompleta." });
+        if (!proponenteFigId || !parceiroFigId) return res.status(400).json({ success: false, error: getMsg('incomplete_trade', lang) });
 
         const docProponente = await buscarCartelaUsuario(proposta.proponente_email);
         const docParceiro = await buscarCartelaUsuario(proposta.parceiro_email);
 
-        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: "Cartelas não encontradas." });
+        if (!docProponente || !docParceiro) return res.status(404).json({ success: false, error: getMsg('cards_not_found', lang) });
 
         garantirAlbumValido(docProponente);
         garantirAlbumValido(docParceiro);
@@ -1263,7 +1318,7 @@ app.post('/trade/confirm', async (req, res) => {
             proposta.status = "expirada";
             proposta.updated_at = new Date().toISOString();
             await cloudant.putDocument({ db: DB_NAME, docId: proposta_id, document: proposta });
-            return res.status(400).json({ success: false, error: "Figurinha(s) não disponível(is)." });
+            return res.status(400).json({ success: false, error: getMsg('stickers_unavailable', lang) });
         }
 
         removerUmaRepetida(docProponente, proponenteFigId);
