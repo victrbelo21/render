@@ -868,7 +868,7 @@ app.post('/abrir-pacote', async (req, res) => {
         const figsComuns = [
             44, 45, 46, 54, 55, 56, 64, 65, 66,
             74, 75, 76, 79, 80, 81, 82, 83, 84,
-            85, 86, 87, 88
+            85, 86, 87, 88, 42, 47, 52, 57, 62, 67, 72, 77
         ];
 
         for (let i = 0; i < QTD_POR_PACOTE; i++) {
