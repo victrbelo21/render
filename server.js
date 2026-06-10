@@ -765,34 +765,115 @@ app.post('/buscar-cartela', async (req, res) => {
 // ROTAS DO PERFIL (Salvar Time do Coração e Embaixadinhas)
 // =====================================================================
 app.post('/atualizar-perfil', async (req, res) => {
+  const { user_email, time_coracao, recorde_embaixadinha } = req.body;
+
   try {
-    const { user_email, time_coracao, recorde_embaixadinha } = req.body;
-    
-    const searchResponse = await cloudant.postFind({
-      db: DB_NAME,
-      selector: { type: { "$eq": "cartela_usuario" }, user_email: { "$eq": user_email } }
+    if (!user_email) {
+      return res.status(400).json({
+        success: false,
+        error: 'User email obrigatório.'
+      });
+    }
+
+    const emailNormalizado = String(user_email).toLowerCase().trim();
+    const maxTentativas = 4;
+
+    for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+      const searchResponse = await cloudant.postFind({
+        db: DB_NAME,
+        selector: {
+          type: { "$eq": "cartela_usuario" },
+          user_email: { "$eq": emailNormalizado }
+        },
+        limit: 1
+      });
+
+      const existingDoc = searchResponse.result.docs[0];
+
+      // Usuário novo ainda não criou cartela.
+      // Não tratamos isso como erro, para não bloquear o primeiro acesso.
+      if (!existingDoc) {
+        console.log(`ℹ️ Perfil ignorado: ${emailNormalizado} ainda não possui cartela.`);
+        return res.status(200).json({
+          success: true,
+          skipped: true,
+          reason: 'cartela_not_found',
+          message: 'Usuário ainda não possui cartela. Perfil será salvo após criação da cartela.'
+        });
+      }
+
+      let houveAlteracao = false;
+
+      if (time_coracao !== undefined && String(time_coracao).trim() !== "") {
+        existingDoc.time_coracao = time_coracao;
+        houveAlteracao = true;
+      }
+
+      if (
+        recorde_embaixadinha !== undefined &&
+        recorde_embaixadinha !== null &&
+        recorde_embaixadinha !== ""
+      ) {
+        const novoRecorde = Number(recorde_embaixadinha);
+        const recordeAtual = Number(existingDoc.recorde_embaixadinha || 0);
+
+        if (Number.isFinite(novoRecorde) && novoRecorde > recordeAtual) {
+          existingDoc.recorde_embaixadinha = novoRecorde;
+          houveAlteracao = true;
+        }
+      }
+
+      if (!houveAlteracao) {
+        return res.status(200).json({
+          success: true,
+          skipped: true,
+          message: 'Nenhuma alteração necessária.'
+        });
+      }
+
+      existingDoc.timestamp = new Date().toISOString();
+
+      try {
+        await cloudant.putDocument({
+          db: DB_NAME,
+          docId: existingDoc._id,
+          document: existingDoc
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Perfil atualizado!"
+        });
+
+      } catch (error) {
+        const isConflict =
+          error?.status === 409 ||
+          error?.code === 409 ||
+          error?.statusText === 'Conflict' ||
+          error?.result?.error === 'conflict';
+
+        if (isConflict && tentativa < maxTentativas) {
+          console.warn(`⚠️ Conflito ao atualizar perfil de ${emailNormalizado}. Tentativa ${tentativa}/${maxTentativas}.`);
+          await new Promise(resolve => setTimeout(resolve, 150 * tentativa));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return res.status(409).json({
+      success: false,
+      error: 'Conflito ao atualizar perfil. Tente novamente.'
     });
 
-    const existingDoc = searchResponse.result.docs[0];
-
-    if (existingDoc) {
-      if (time_coracao !== undefined && time_coracao !== "") {
-          existingDoc.time_coracao = time_coracao;
-      }
-      if (recorde_embaixadinha !== undefined) {
-          if (!existingDoc.recorde_embaixadinha || recorde_embaixadinha > existingDoc.recorde_embaixadinha) {
-              existingDoc.recorde_embaixadinha = recorde_embaixadinha;
-          }
-      }
-      
-      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Perfil atualizado!" });
-    } else {
-      res.status(404).json({ success: false, error: 'User not found' });
-    }
   } catch (error) {
     console.error("Erro ao atualizar perfil:", error);
-    res.status(500).json({ success: false, error: 'Erro interno' });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro interno'
+    });
   }
 });
 
