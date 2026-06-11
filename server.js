@@ -275,37 +275,206 @@ cron.schedule('*/10 * * * *', async () => {
     };
 
     const salvarDocumentosEmLotes = async (documentos, tamanhoLote = 8, pausaMs = 1200) => {
-        for (let i = 0; i < documentos.length; i += tamanhoLote) {
-            const lote = documentos.slice(i, i + tamanhoLote);
-            const numeroLote = Math.floor(i / tamanhoLote) + 1;
-            const totalLotes = Math.ceil(documentos.length / tamanhoLote);
+    const mesclarPontuacaoNaCartelaAtual = (docAtual, docCalculado) => {
+        if (!Array.isArray(docAtual.palpites_jogos)) {
+            docAtual.palpites_jogos = [];
+        }
 
-            console.log(`💾 Salvando lote ${numeroLote}/${totalLotes} com ${lote.length} documento(s)...`);
+        if (!Array.isArray(docCalculado.palpites_jogos)) {
+            docCalculado.palpites_jogos = [];
+        }
 
-            const response = await executarComRetry(
-                () => cloudant.postBulkDocs({
-                    db: DB_NAME,
-                    bulkDocs: { docs: lote }
-                }),
-                `Salvamento bulkDocs - lote ${numeroLote}`,
-                5,
-                1500
+        docCalculado.palpites_jogos.forEach(palpiteCalculado => {
+            const dataCalculada = formatarDataISO(palpiteCalculado.data_jogo);
+
+            const palpiteAtual = docAtual.palpites_jogos.find(p => {
+                const mesmoTime1 = formatarTexto(p.time_1) === formatarTexto(palpiteCalculado.time_1);
+                const mesmoTime2 = formatarTexto(p.time_2) === formatarTexto(palpiteCalculado.time_2);
+                const mesmaData = formatarDataISO(p.data_jogo) === dataCalculada;
+
+                return mesmoTime1 && mesmoTime2 && mesmaData;
+            });
+
+            if (!palpiteAtual) return;
+
+            if (palpiteCalculado.placar_oficial_1 !== undefined) {
+                palpiteAtual.placar_oficial_1 = palpiteCalculado.placar_oficial_1;
+            } else {
+                delete palpiteAtual.placar_oficial_1;
+            }
+
+            if (palpiteCalculado.placar_oficial_2 !== undefined) {
+                palpiteAtual.placar_oficial_2 = palpiteCalculado.placar_oficial_2;
+            } else {
+                delete palpiteAtual.placar_oficial_2;
+            }
+
+            palpiteAtual.pontos_obtidos = palpiteCalculado.pontos_obtidos || 0;
+        });
+
+        docAtual.pontos_acumulados = docCalculado.pontos_acumulados || 0;
+
+        if (docCalculado.timestamp_reprocessamento_forcado) {
+            docAtual.timestamp_reprocessamento_forcado = docCalculado.timestamp_reprocessamento_forcado;
+        }
+
+        return docAtual;
+    };
+
+    const mesclarControleAtual = (controleAtual, controleCalculado) => {
+        if (!Array.isArray(controleAtual.jogos_processados)) {
+            controleAtual.jogos_processados = [];
+        }
+
+        if (!Array.isArray(controleCalculado.jogos_processados)) {
+            controleCalculado.jogos_processados = [];
+        }
+
+        const processadosMesclados = new Set([
+            ...controleAtual.jogos_processados.map(id => String(id)),
+            ...controleCalculado.jogos_processados.map(id => String(id))
+        ]);
+
+        controleAtual.jogos_processados = Array.from(processadosMesclados);
+
+        const estadoManualAtual = JSON.stringify(controleAtual.jogos_manuais || []);
+        const estadoManualCalculado = JSON.stringify(controleCalculado.jogos_manuais || []);
+
+        if (estadoManualAtual === estadoManualCalculado) {
+            controleAtual.ultimo_estado_manuais = controleCalculado.ultimo_estado_manuais;
+        } else {
+            console.warn(
+                '⚠️ controle_processamento_jogos mudou durante o salvamento. ' +
+                'Preservei jogos_manuais atuais do banco.'
+            );
+        }
+
+        controleAtual.type = controleAtual.type || 'config';
+
+        if (controleCalculado.forcar_gravacao_total === false) {
+            controleAtual.forcar_gravacao_total = false;
+        }
+
+        if (controleCalculado.ultimo_reprocessamento_forcado) {
+            controleAtual.ultimo_reprocessamento_forcado = controleCalculado.ultimo_reprocessamento_forcado;
+        }
+
+        return controleAtual;
+    };
+
+    const resolverConflitosDoLote = async (falhas, lote, numeroLote) => {
+        for (const falha of falhas) {
+            if (falha.error !== 'conflict') {
+                throw new Error(
+                    `Falha não recuperável no lote ${numeroLote}: ${falha.id} - ${falha.error} - ${falha.reason}`
+                );
+            }
+
+            const docCalculado = lote.find(doc => doc._id === falha.id);
+
+            if (!docCalculado) {
+                console.warn(`⚠️ Conflito no lote ${numeroLote}, mas não encontrei o documento original no lote: ${falha.id}`);
+                continue;
+            }
+
+            console.warn(
+                `⚠️ Conflict detectado no documento ${falha.id}. ` +
+                `Vou buscar a _rev atual, mesclar os campos necessários e tentar salvar novamente.`
             );
 
-            const resultados = response.result || [];
+            try {
+                const docAtual = (await executarComRetry(
+                    () => cloudant.getDocument({
+                        db: DB_NAME,
+                        docId: falha.id
+                    }),
+                    `Buscar documento atualizado após conflict - ${falha.id}`,
+                    5,
+                    1500
+                )).result;
 
-            const falhas = resultados.filter(item => item.error);
+                let docParaSalvar;
 
-            if (falhas.length > 0) {
-    console.error(`❌ ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
-    throw new Error(`Falha ao salvar ${falhas.length} documento(s) no lote ${numeroLote}.`);
-}
+                if (docAtual._id === ID_CONTROLE_JOGOS) {
+                    docParaSalvar = mesclarControleAtual(docAtual, docCalculado);
+                } else if (docAtual.type === 'cartela_usuario') {
+                    docParaSalvar = mesclarPontuacaoNaCartelaAtual(docAtual, docCalculado);
+                } else {
+                    console.warn(
+                        `⚠️ Documento ${falha.id} não é cartela_usuario nem controle. ` +
+                        `Não vou sobrescrever para evitar perda de dados.`
+                    );
+                    continue;
+                }
 
-            if (i + tamanhoLote < documentos.length) {
-                await aguardar(pausaMs);
+                await executarComRetry(
+                    () => cloudant.putDocument({
+                        db: DB_NAME,
+                        docId: docParaSalvar._id,
+                        document: docParaSalvar
+                    }),
+                    `Salvar documento recuperado após conflict - ${falha.id}`,
+                    5,
+                    1500
+                );
+
+                console.log(`✅ Conflict recuperado e documento salvo: ${falha.id}`);
+
+            } catch (error) {
+                console.error(
+                    `❌ Não consegui recuperar o conflict do documento ${falha.id}. ` +
+                    `Vou continuar os próximos lotes para não interromper o reprocessamento.`,
+                    error.message || error
+                );
             }
         }
     };
+
+    let totalSalvosDireto = 0;
+    let totalConflitos = 0;
+
+    for (let i = 0; i < documentos.length; i += tamanhoLote) {
+        const lote = documentos.slice(i, i + tamanhoLote);
+        const numeroLote = Math.floor(i / tamanhoLote) + 1;
+        const totalLotes = Math.ceil(documentos.length / tamanhoLote);
+
+        console.log(`💾 Salvando lote ${numeroLote}/${totalLotes} com ${lote.length} documento(s)...`);
+
+        const response = await executarComRetry(
+            () => cloudant.postBulkDocs({
+                db: DB_NAME,
+                bulkDocs: { docs: lote }
+            }),
+            `Salvamento bulkDocs - lote ${numeroLote}`,
+            5,
+            1500
+        );
+
+        const resultados = response.result || [];
+        const falhas = resultados.filter(item => item.error);
+        const sucessos = resultados.filter(item => !item.error);
+
+        totalSalvosDireto += sucessos.length;
+
+        if (falhas.length > 0) {
+            totalConflitos += falhas.filter(item => item.error === 'conflict').length;
+
+            console.error(`⚠️ ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
+
+            await resolverConflitosDoLote(falhas, lote, numeroLote);
+        }
+
+        if (i + tamanhoLote < documentos.length) {
+            await aguardar(pausaMs);
+        }
+    }
+
+    console.log(
+        `✅ Salvamento em lotes finalizado. ` +
+        `${totalSalvosDireto} documento(s) salvos direto. ` +
+        `${totalConflitos} conflict(s) tratados.`
+    );
+};
 
     const buscarCartelasEmLotes = async (limiteTotal = 3000, tamanhoLote = 150, pausaMs = 1000) => {
         const cartelas = [];
