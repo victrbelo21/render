@@ -297,8 +297,9 @@ cron.schedule('*/30 * * * *', async () => {
             const falhas = resultados.filter(item => item.error);
 
             if (falhas.length > 0) {
-                console.error(`❌ ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
-            }
+    console.error(`❌ ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
+    throw new Error(`Falha ao salvar ${falhas.length} documento(s) no lote ${numeroLote}.`);
+}
 
             if (i + tamanhoLote < documentos.length) {
                 await aguardar(pausaMs);
@@ -462,148 +463,266 @@ const todosJogosFinalizados = [...jogosDaAPI];
         }
 
         // Filtra quais precisam ser processados *agora* (Novos da API ou qualquer Manual modificado)
-        const jogosOficiais = todosJogosFinalizados.filter(jogo => 
-            jogo.isManual || !controleDoc.jogos_processados.includes(jogo.id)
-        );
+// Normaliza IDs para evitar diferença entre número e string: 537327 vs "537327"
+if (!Array.isArray(controleDoc.jogos_processados)) {
+    controleDoc.jogos_processados = [];
+}
 
-        if (jogosOficiais.length === 0 && !teveAlteracaoManual) {
-            console.log('✅ Tudo atualizado. Nenhum jogo novo e nenhum rollback detectado.');
-            return;
-        }
+const jogosProcessadosNormalizados = new Set(
+    controleDoc.jogos_processados.map(id => String(id))
+);
 
-        console.log(`🎯 Varrendo cartelas (Alteração manual ou novos jogos detectados)...`);
-        
-        const cartelas = await buscarCartelasEmLotes(3000, 150, 1000);
+const jogosOficiais = todosJogosFinalizados.filter(jogo => {
+    if (jogo.isManual) return true;
+    return !jogosProcessadosNormalizados.has(String(jogo.id));
+});
+
+if (jogosOficiais.length === 0 && !teveAlteracaoManual) {
+    console.log('✅ Tudo atualizado. Nenhum jogo novo e nenhum rollback detectado.');
+    return;
+}
+
+console.log(`🎯 Varrendo cartelas (Alteração manual ou novos jogos detectados)...`);
+
+const cartelas = await buscarCartelasEmLotes(3000, 150, 1000);
 const documentosParaAtualizar = [];
 
 console.log(`🎟️ Total de cartelas carregadas para recálculo: ${cartelas.length}`);
 
-        for (let doc of cartelas) {
-            let pontosTotalCalculado = 0;
-            let houveMudancaInterna = false; 
+for (let doc of cartelas) {
+    let pontosTotalCalculado = 0;
+    let houveMudancaInterna = false;
 
-            if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
+    if (!doc.palpites_jogos || doc.palpites_jogos.length === 0) continue;
 
-            doc.palpites_jogos.forEach(palpite => {
-                const time1Ingles = traduzirTime(palpite.time_1);
-                const time2Ingles = traduzirTime(palpite.time_2);
-                const dataPalpite = formatarDataISO(palpite.data_jogo);
+    doc.palpites_jogos.forEach(palpite => {
+        const time1Ingles = traduzirTime(palpite.time_1);
+        const time2Ingles = traduzirTime(palpite.time_2);
+        const dataPalpite = formatarDataISO(palpite.data_jogo);
 
-                const jogoFinalizado = todosJogosFinalizados.find(j => {
-                    const home = formatarTexto(j.homeTeam.name);
-                    const away = formatarTexto(j.awayTeam.name);
+        const jogoFinalizado = todosJogosFinalizados.find(j => {
+            const home = formatarTexto(j.homeTeam.name);
+            const away = formatarTexto(j.awayTeam.name);
 
-                    // TRAVA DE DATA COM TOLERÂNCIA (± 24h)
-                    let bateuData = false;
-                    const dataAPI = formatarDataISO(j.utcDate);
+            // TRAVA DE DATA COM TOLERÂNCIA (± 24h)
+            let bateuData = false;
+            const dataAPI = formatarDataISO(j.utcDate);
 
-                    if (!dataPalpite) {
-                        bateuData = true; 
-                    } else if (j.isManual && !j.strictDate) {
-                        bateuData = true; 
-                    } else if (dataAPI) {
-                        const dPalpite = new Date(dataPalpite + "T12:00:00Z");
-                        const dAPI = new Date(dataAPI + "T12:00:00Z");
-                        const diffEmDias = Math.abs(dPalpite - dAPI) / (1000 * 60 * 60 * 24);
-                        bateuData = (diffEmDias <= 1); 
-                    }
-
-                    const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
-                                       (away.includes(time2Ingles) || time2Ingles.includes(away));
-                    const ordreInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
-                                           (home.includes(time2Ingles) || time2Ingles.includes(home));
-
-                    return bateuData && (ordreExata || ordreInvertida);
-                });
-
-                if (jogoFinalizado) {
-                    const home = formatarTexto(jogoFinalizado.homeTeam.name);
-                    const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
-                    
-                    let placarReal1 = ordreExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
-                    let placarReal2 = ordreExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
-
-                    const precisaCalcular = jogosOficiais.some(jo => jo.id === jogoFinalizado.id);
-                    
-                    if (precisaCalcular) {
-                        // === NOVA LÓGICA DE PONTUAÇÃO ===
-                        const palpite1 = palpite.placar_1;
-                        const palpite2 = palpite.placar_2;
-                        let pontosGanhos = 0;
-
-                        const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
-                        const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
-                        
-                        const diffReal = placarReal1 - placarReal2;
-                        const diffPalpite = palpite1 - palpite2;
-
-                        const acertouVencedor = (vencedorReal === vencedorPalpite);
-                        const acertouUmPlacar = (palpite1 === placarReal1 || palpite2 === placarReal2);
-                        const acertouDiferenca = (diffReal === diffPalpite);
-                        const acertouPlacarExato = (palpite1 === placarReal1 && palpite2 === placarReal2);
-
-                        if (acertouPlacarExato) {
-                            pontosGanhos = 10;
-                        } else if (acertouVencedor) {
-                            if (acertouDiferenca) {
-                                pontosGanhos = 7;
-                            } else if (acertouUmPlacar) {
-                                pontosGanhos = 5;
-                            } else {
-                                pontosGanhos = 3;
-                            }
-                        }
-                        // ===================================
-
-                        if (palpite.pontos_obtidos !== pontosGanhos || palpite.placar_oficial_1 !== placarReal1 || palpite.placar_oficial_2 !== placarReal2) {
-                            palpite.pontos_obtidos = pontosGanhos;
-                            palpite.placar_oficial_1 = placarReal1;
-                            palpite.placar_oficial_2 = placarReal2;
-                            houveMudancaInterna = true;
-                        }
-                    }
-                } else {
-                    if (palpite.placar_oficial_1 !== undefined) {
-                        delete palpite.placar_oficial_1;
-                        delete palpite.placar_oficial_2;
-                        palpite.pontos_obtidos = 0; 
-                        houveMudancaInterna = true;
-                    }
-                }
-                
-                pontosTotalCalculado += (palpite.pontos_obtidos || 0);
-            });
-
-            if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
-                doc.pontos_acumulados = pontosTotalCalculado;
-                documentosParaAtualizar.push(doc);
+            if (!dataPalpite) {
+                bateuData = true;
+            } else if (j.isManual && !j.strictDate) {
+                bateuData = true;
+            } else if (dataAPI) {
+                const dPalpite = new Date(dataPalpite + "T12:00:00Z");
+                const dAPI = new Date(dataAPI + "T12:00:00Z");
+                const diffEmDias = Math.abs(dPalpite - dAPI) / (1000 * 60 * 60 * 24);
+                bateuData = (diffEmDias <= 1);
             }
-        }
 
-        let controleModificado = teveAlteracaoManual;
-        todosJogosFinalizados.forEach(jogo => {
-            if (!jogo.isManual && !controleDoc.jogos_processados.includes(jogo.id)) {
-                controleDoc.jogos_processados.push(jogo.id);
-                controleModificado = true;
-            }
+            const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home)) &&
+                               (away.includes(time2Ingles) || time2Ingles.includes(away));
+
+            const ordreInvertida = (away.includes(time1Ingles) || time1Ingles.includes(away)) &&
+                                   (home.includes(time2Ingles) || time2Ingles.includes(home));
+
+            return bateuData && (ordreExata || ordreInvertida);
         });
 
-        if (documentosParaAtualizar.length > 0) {
-            const documentosParaSalvar = [...documentosParaAtualizar];
+        if (jogoFinalizado) {
+            const home = formatarTexto(jogoFinalizado.homeTeam.name);
+            const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
 
-            if (controleModificado) {
-                documentosParaSalvar.push(controleDoc);
+            let placarReal1 = ordreExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
+            let placarReal2 = ordreExata ? jogoFinalizado.score.fullTime.away : jogoFinalizado.score.fullTime.home;
+
+            const precisaCalcular = jogosOficiais.some(jo =>
+                String(jo.id) === String(jogoFinalizado.id)
+            );
+
+            if (precisaCalcular) {
+                // === NOVA LÓGICA DE PONTUAÇÃO ===
+                const palpite1 = palpite.placar_1;
+                const palpite2 = palpite.placar_2;
+                let pontosGanhos = 0;
+
+                const vencedorReal = placarReal1 > placarReal2 ? 1 : (placarReal1 < placarReal2 ? 2 : 0);
+                const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+
+                const diffReal = placarReal1 - placarReal2;
+                const diffPalpite = palpite1 - palpite2;
+
+                const acertouVencedor = (vencedorReal === vencedorPalpite);
+                const acertouUmPlacar = (palpite1 === placarReal1 || palpite2 === placarReal2);
+                const acertouDiferenca = (diffReal === diffPalpite);
+                const acertouPlacarExato = (palpite1 === placarReal1 && palpite2 === placarReal2);
+
+                if (acertouPlacarExato) {
+                    pontosGanhos = 10;
+                } else if (acertouVencedor) {
+                    if (acertouDiferenca) {
+                        pontosGanhos = 7;
+                    } else if (acertouUmPlacar) {
+                        pontosGanhos = 5;
+                    } else {
+                        pontosGanhos = 3;
+                    }
+                }
+                // ===================================
+
+                if (
+                    palpite.pontos_obtidos !== pontosGanhos ||
+                    palpite.placar_oficial_1 !== placarReal1 ||
+                    palpite.placar_oficial_2 !== placarReal2
+                ) {
+                    palpite.pontos_obtidos = pontosGanhos;
+                    palpite.placar_oficial_1 = placarReal1;
+                    palpite.placar_oficial_2 = placarReal2;
+                    houveMudancaInterna = true;
+                }
             }
-
-            await salvarDocumentosEmLotes(documentosParaSalvar, 8, 1200);
-
-            console.log(`📦 Atualização/Rollback concluído! ${documentosParaSalvar.length} documentos salvos em lotes.`);
-        } else if (controleModificado) {
-            await cloudant.putDocument({ db: DB_NAME, docId: controleDoc._id, document: controleDoc });
-            console.log('✅ Jogos registrados no controle. Nenhuma cartela sofreu alteração.');
         } else {
-            console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
+            if (palpite.placar_oficial_1 !== undefined) {
+                delete palpite.placar_oficial_1;
+                delete palpite.placar_oficial_2;
+                palpite.pontos_obtidos = 0;
+                houveMudancaInterna = true;
+            }
         }
+
+        pontosTotalCalculado += (palpite.pontos_obtidos || 0);
+    });
+
+    if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
+        doc.pontos_acumulados = pontosTotalCalculado;
+        documentosParaAtualizar.push(doc);
+    }
+}
+
+// Atualiza controle de jogos processados com IDs normalizados
+let controleModificado = teveAlteracaoManual;
+
+todosJogosFinalizados.forEach(jogo => {
+    if (jogo.isManual) return;
+
+    const jogoId = String(jogo.id);
+
+    if (!jogosProcessadosNormalizados.has(jogoId)) {
+        controleDoc.jogos_processados.push(jogoId);
+        jogosProcessadosNormalizados.add(jogoId);
+        controleModificado = true;
+    }
+});
+
+if (documentosParaAtualizar.length > 0) {
+    const documentosParaSalvar = [...documentosParaAtualizar];
+
+    if (controleModificado) {
+        // Busca a _rev mais recente do controle antes de colocar no bulkDocs.
+        // Isso mantém o controle no mesmo lugar do fluxo, mas evita conflict por _rev antiga.
+        const controleAtualizado = (await executarComRetry(
+            () => cloudant.getDocument({
+                db: DB_NAME,
+                docId: ID_CONTROLE_JOGOS
+            }),
+            'Buscar _rev atual do controle antes do bulkDocs',
+            5,
+            1500
+        )).result;
+
+        if (!Array.isArray(controleAtualizado.jogos_processados)) {
+            controleAtualizado.jogos_processados = [];
+        }
+
+        const processadosMesclados = new Set([
+            ...controleAtualizado.jogos_processados.map(id => String(id)),
+            ...controleDoc.jogos_processados.map(id => String(id))
+        ]);
+
+        controleAtualizado.jogos_processados = Array.from(processadosMesclados);
+
+        const estadoManualBanco = JSON.stringify(controleAtualizado.jogos_manuais || []);
+        const estadoManualProcessado = JSON.stringify(controleDoc.jogos_manuais || []);
+
+        if (estadoManualBanco === estadoManualProcessado) {
+            controleAtualizado.ultimo_estado_manuais = controleDoc.ultimo_estado_manuais;
+        } else {
+            console.warn(
+                '⚠️ jogos_manuais mudou enquanto o cron rodava. ' +
+                'Não atualizei ultimo_estado_manuais para não mascarar uma alteração nova.'
+            );
+        }
+
+        controleAtualizado.type = controleAtualizado.type || 'config';
+
+        documentosParaSalvar.push(controleAtualizado);
+    }
+
+    await salvarDocumentosEmLotes(documentosParaSalvar, 8, 1200);
+
+    rankingCache = { pontos: null, recorde: null };
+    ultimaAtualizacaoCache = 0;
+
+    console.log(
+        `📦 Atualização/Rollback concluído! ` +
+        `${documentosParaAtualizar.length} cartela(s) salvas. ` +
+        `${controleModificado ? 'Controle atualizado.' : 'Controle sem alteração.'}`
+    );
+
+} else if (controleModificado) {
+    const controleAtualizado = (await executarComRetry(
+        () => cloudant.getDocument({
+            db: DB_NAME,
+            docId: ID_CONTROLE_JOGOS
+        }),
+        'Buscar _rev atual do controle antes do putDocument',
+        5,
+        1500
+    )).result;
+
+    if (!Array.isArray(controleAtualizado.jogos_processados)) {
+        controleAtualizado.jogos_processados = [];
+    }
+
+    const processadosMesclados = new Set([
+        ...controleAtualizado.jogos_processados.map(id => String(id)),
+        ...controleDoc.jogos_processados.map(id => String(id))
+    ]);
+
+    controleAtualizado.jogos_processados = Array.from(processadosMesclados);
+
+    const estadoManualBanco = JSON.stringify(controleAtualizado.jogos_manuais || []);
+    const estadoManualProcessado = JSON.stringify(controleDoc.jogos_manuais || []);
+
+    if (estadoManualBanco === estadoManualProcessado) {
+        controleAtualizado.ultimo_estado_manuais = controleDoc.ultimo_estado_manuais;
+    } else {
+        console.warn(
+            '⚠️ jogos_manuais mudou enquanto o cron rodava. ' +
+            'Não atualizei ultimo_estado_manuais para não mascarar uma alteração nova.'
+        );
+    }
+
+    controleAtualizado.type = controleAtualizado.type || 'config';
+
+    await executarComRetry(
+        () => cloudant.putDocument({
+            db: DB_NAME,
+            docId: controleAtualizado._id,
+            document: controleAtualizado
+        }),
+        'Salvar controle_processamento_jogos com _rev atual',
+        5,
+        1500
+    );
+
+    rankingCache = { pontos: null, recorde: null };
+    ultimaAtualizacaoCache = 0;
+
+    console.log('✅ Jogos registrados no controle. Nenhuma cartela sofreu alteração.');
+
+} else {
+    console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
+}
         
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
