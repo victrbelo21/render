@@ -375,6 +375,8 @@ cron.schedule('*/10 * * * *', async () => {
         try {
             controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
             if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
+
+            const forcarGravacaoTotal = controleDoc.forcar_gravacao_total === true;
         } catch (e) {
             controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], ultimo_estado_manuais: "[]", type: "config" };
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
@@ -592,10 +594,15 @@ for (let doc of cartelas) {
         pontosTotalCalculado += (palpite.pontos_obtidos || 0);
     });
 
-    if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna) {
-        doc.pontos_acumulados = pontosTotalCalculado;
-        documentosParaAtualizar.push(doc);
+    if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna || forcarGravacaoTotal) {
+    doc.pontos_acumulados = pontosTotalCalculado;
+
+    if (forcarGravacaoTotal && !houveMudancaInterna) {
+        doc.timestamp_reprocessamento_forcado = new Date().toISOString();
     }
+
+    documentosParaAtualizar.push(doc);
+}
 }
 
 // Atualiza controle de jogos processados com IDs normalizados
