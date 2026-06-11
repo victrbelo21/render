@@ -242,7 +242,7 @@ cron.schedule('*/14 * * * *', async () => {
 });
 
 // TRABALHADOR INVISÍVEL - Recálculo Contínuo de Resultados
-cron.schedule('*/30 * * * *', async () => {
+cron.schedule('*/5 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
 
     const aguardar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
