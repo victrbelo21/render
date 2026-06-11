@@ -265,6 +265,92 @@ cron.schedule('*/30 * * * *', async () => {
             }
         }
     };
+
+    const executarComRetryCloudant = async (operacao, contexto, tentativas = 5, pausaInicialMs = 1500) => {
+    for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
+        try {
+            return await operacao();
+        } catch (error) {
+            const status = error?.status || error?.statusCode || error?.code || error?.response?.status;
+            const erroTransitório = [429, 500, 502, 503, 504].includes(Number(status));
+
+            if (!erroTransitório || tentativa === tentativas) {
+                console.error(`❌ Falha definitiva em ${contexto}:`, error.message || error);
+                throw error;
+            }
+
+            const pausaMs = pausaInicialMs * tentativa;
+
+            console.warn(
+                `⚠️ ${contexto}: Cloudant respondeu ${status}. ` +
+                `Tentativa ${tentativa}/${tentativas}. Aguardando ${pausaMs}ms...`
+            );
+
+            await aguardar(pausaMs);
+        }
+    }
+};
+
+const buscarCartelasEmLotes = async (limiteTotal = 3000, tamanhoLote = 150, pausaMs = 1000) => {
+    const cartelas = [];
+    let bookmark = null;
+    let numeroLote = 1;
+
+    while (cartelas.length < limiteTotal) {
+        const restante = limiteTotal - cartelas.length;
+        const limiteDoLote = Math.min(tamanhoLote, restante);
+
+        const params = {
+            db: DB_NAME,
+            selector: { type: { "$eq": "cartela_usuario" } },
+            limit: limiteDoLote
+        };
+
+        if (bookmark) {
+            params.bookmark = bookmark;
+        }
+
+        console.log(
+            `📖 Lendo lote ${numeroLote} de cartelas ` +
+            `(${cartelas.length}/${limiteTotal} carregadas até agora)...`
+        );
+
+        const response = await executarComRetryCloudant(
+            () => cloudant.postFind(params),
+            `Leitura de cartelas - lote ${numeroLote}`
+        );
+
+        const docs = response.result.docs || [];
+
+        if (docs.length === 0) {
+            console.log('✅ Leitura finalizada: nenhum documento novo retornado.');
+            break;
+        }
+
+        cartelas.push(...docs);
+        bookmark = response.result.bookmark;
+
+        console.log(
+            `✅ Lote ${numeroLote} lido com ${docs.length} cartela(s). ` +
+            `Total carregado: ${cartelas.length}/${limiteTotal}`
+        );
+
+        if (cartelas.length >= limiteTotal) {
+            console.log(`🏁 Limite máximo de ${limiteTotal} cartelas atingido.`);
+            break;
+        }
+
+        if (docs.length < limiteDoLote) {
+            console.log('🏁 Todas as cartelas disponíveis foram carregadas.');
+            break;
+        }
+
+        await aguardar(pausaMs);
+        numeroLote++;
+    }
+
+    return cartelas;
+};
     
     try {
         let controleDoc;
@@ -327,14 +413,10 @@ cron.schedule('*/30 * * * *', async () => {
 
         console.log(`🎯 Varrendo cartelas (Alteração manual ou novos jogos detectados)...`);
         
-        const userDocs = await cloudant.postFind({
-            db: DB_NAME,
-            selector: { type: { "$eq": "cartela_usuario" } },
-            limit: 2000
-        });
+        const cartelas = await buscarCartelasEmLotes(3000, 150, 1000);
+const documentosParaAtualizar = [];
 
-        const cartelas = userDocs.result.docs;
-        const documentosParaAtualizar = [];
+console.log(`🎟️ Total de cartelas carregadas para recálculo: ${cartelas.length}`);
 
         for (let doc of cartelas) {
             let pontosTotalCalculado = 0;
