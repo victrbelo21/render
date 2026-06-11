@@ -247,6 +247,33 @@ cron.schedule('*/30 * * * *', async () => {
 
     const aguardar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+    const executarComRetry = async (operacao, contexto, tentativas = 5, pausaInicialMs = 1500) => {
+        for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
+            try {
+                return await operacao();
+            } catch (error) {
+                const status = error?.status || error?.statusCode || error?.code || error?.response?.status;
+                const erroTransitório =
+                    [429, 500, 502, 503, 504].includes(Number(status)) ||
+                    ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN'].includes(error?.code);
+
+                if (!erroTransitório || tentativa === tentativas) {
+                    console.error(`❌ Falha definitiva em ${contexto}:`, error.message || error);
+                    throw error;
+                }
+
+                const pausaMs = pausaInicialMs * tentativa;
+
+                console.warn(
+                    `⚠️ ${contexto}: erro transitório ${status || error?.code}. ` +
+                    `Tentativa ${tentativa}/${tentativas}. Aguardando ${pausaMs}ms...`
+                );
+
+                await aguardar(pausaMs);
+            }
+        }
+    };
+
     const salvarDocumentosEmLotes = async (documentos, tamanhoLote = 8, pausaMs = 1200) => {
         for (let i = 0; i < documentos.length; i += tamanhoLote) {
             const lote = documentos.slice(i, i + tamanhoLote);
@@ -255,10 +282,23 @@ cron.schedule('*/30 * * * *', async () => {
 
             console.log(`💾 Salvando lote ${numeroLote}/${totalLotes} com ${lote.length} documento(s)...`);
 
-            await cloudant.postBulkDocs({
-                db: DB_NAME,
-                bulkDocs: { docs: lote }
-            });
+            const response = await executarComRetry(
+                () => cloudant.postBulkDocs({
+                    db: DB_NAME,
+                    bulkDocs: { docs: lote }
+                }),
+                `Salvamento bulkDocs - lote ${numeroLote}`,
+                5,
+                1500
+            );
+
+            const resultados = response.result || [];
+
+            const falhas = resultados.filter(item => item.error);
+
+            if (falhas.length > 0) {
+                console.error(`❌ ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
+            }
 
             if (i + tamanhoLote < documentos.length) {
                 await aguardar(pausaMs);
@@ -266,91 +306,68 @@ cron.schedule('*/30 * * * *', async () => {
         }
     };
 
-    const executarComRetryCloudant = async (operacao, contexto, tentativas = 5, pausaInicialMs = 1500) => {
-    for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
-        try {
-            return await operacao();
-        } catch (error) {
-            const status = error?.status || error?.statusCode || error?.code || error?.response?.status;
-            const erroTransitório = [429, 500, 502, 503, 504].includes(Number(status));
+    const buscarCartelasEmLotes = async (limiteTotal = 3000, tamanhoLote = 150, pausaMs = 1000) => {
+        const cartelas = [];
+        let bookmark = null;
+        let numeroLote = 1;
 
-            if (!erroTransitório || tentativa === tentativas) {
-                console.error(`❌ Falha definitiva em ${contexto}:`, error.message || error);
-                throw error;
+        while (cartelas.length < limiteTotal) {
+            const restante = limiteTotal - cartelas.length;
+            const limiteDoLote = Math.min(tamanhoLote, restante);
+
+            const params = {
+                db: DB_NAME,
+                selector: { type: { "$eq": "cartela_usuario" } },
+                limit: limiteDoLote
+            };
+
+            if (bookmark) {
+                params.bookmark = bookmark;
             }
 
-            const pausaMs = pausaInicialMs * tentativa;
-
-            console.warn(
-                `⚠️ ${contexto}: Cloudant respondeu ${status}. ` +
-                `Tentativa ${tentativa}/${tentativas}. Aguardando ${pausaMs}ms...`
+            console.log(
+                `📖 Lendo lote ${numeroLote} de cartelas ` +
+                `(${cartelas.length}/${limiteTotal} carregadas até agora)...`
             );
 
+            const response = await executarComRetry(
+                () => cloudant.postFind(params),
+                `Leitura de cartelas - lote ${numeroLote}`,
+                5,
+                1500
+            );
+
+            const docs = response.result.docs || [];
+
+            if (docs.length === 0) {
+                console.log('✅ Leitura finalizada: nenhum documento novo retornado.');
+                break;
+            }
+
+            cartelas.push(...docs);
+            bookmark = response.result.bookmark;
+
+            console.log(
+                `✅ Lote ${numeroLote} lido com ${docs.length} cartela(s). ` +
+                `Total carregado: ${cartelas.length}/${limiteTotal}`
+            );
+
+            if (cartelas.length >= limiteTotal) {
+                console.log(`🏁 Limite máximo de ${limiteTotal} cartelas atingido.`);
+                break;
+            }
+
+            if (docs.length < limiteDoLote) {
+                console.log('🏁 Todas as cartelas disponíveis foram carregadas.');
+                break;
+            }
+
             await aguardar(pausaMs);
-        }
-    }
-};
-
-const buscarCartelasEmLotes = async (limiteTotal = 3000, tamanhoLote = 150, pausaMs = 1000) => {
-    const cartelas = [];
-    let bookmark = null;
-    let numeroLote = 1;
-
-    while (cartelas.length < limiteTotal) {
-        const restante = limiteTotal - cartelas.length;
-        const limiteDoLote = Math.min(tamanhoLote, restante);
-
-        const params = {
-            db: DB_NAME,
-            selector: { type: { "$eq": "cartela_usuario" } },
-            limit: limiteDoLote
-        };
-
-        if (bookmark) {
-            params.bookmark = bookmark;
+            numeroLote++;
         }
 
-        console.log(
-            `📖 Lendo lote ${numeroLote} de cartelas ` +
-            `(${cartelas.length}/${limiteTotal} carregadas até agora)...`
-        );
-
-        const response = await executarComRetryCloudant(
-            () => cloudant.postFind(params),
-            `Leitura de cartelas - lote ${numeroLote}`
-        );
-
-        const docs = response.result.docs || [];
-
-        if (docs.length === 0) {
-            console.log('✅ Leitura finalizada: nenhum documento novo retornado.');
-            break;
-        }
-
-        cartelas.push(...docs);
-        bookmark = response.result.bookmark;
-
-        console.log(
-            `✅ Lote ${numeroLote} lido com ${docs.length} cartela(s). ` +
-            `Total carregado: ${cartelas.length}/${limiteTotal}`
-        );
-
-        if (cartelas.length >= limiteTotal) {
-            console.log(`🏁 Limite máximo de ${limiteTotal} cartelas atingido.`);
-            break;
-        }
-
-        if (docs.length < limiteDoLote) {
-            console.log('🏁 Todas as cartelas disponíveis foram carregadas.');
-            break;
-        }
-
-        await aguardar(pausaMs);
-        numeroLote++;
-    }
-
-    return cartelas;
-};
+        return cartelas;
+    };
     
     try {
         let controleDoc;
@@ -362,18 +379,61 @@ const buscarCartelasEmLotes = async (limiteTotal = 3000, tamanhoLote = 150, paus
             await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
         }
 
-        const response = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
+        // =====================================================================
+// BUSCA DOS JOGOS FINALIZADOS NA FOOTBALL-DATA
+// Se a API externa cair, o cron continua com os jogos manuais.
+// =====================================================================
+let jogosDaAPI = [];
+
+try {
+    const response = await executarComRetry(
+    async () => {
+        const res = await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`, {
             headers: { 'X-Auth-Token': FOOTBALL_DATA_TOKEN }
         });
-        
-        const data = await response.json();
-        if (data.errorCode) {
-            console.log('❌ Erro na API:', data.message);
-            return;
+
+        if (!res.ok) {
+            const erroHttp = new Error(`Football-Data HTTP ${res.status}`);
+            erroHttp.status = res.status;
+            throw erroHttp;
         }
-        
-        const jogosDaAPI = data.matches || [];
-        const todosJogosFinalizados = [...jogosDaAPI];
+
+        return res;
+    },
+    'Consulta Football-Data API',
+    4,
+    2000
+);
+
+let data = {};
+
+    try {
+        data = await response.json();
+    } catch (jsonError) {
+        console.warn(
+            '⚠️ Football-Data respondeu, mas o JSON veio inválido. ' +
+            'O cron seguirá apenas com os jogos manuais.',
+            jsonError.message || jsonError
+        );
+        data = {};
+    }
+
+    if (data.errorCode) {
+        console.log('⚠️ Erro na API Football-Data:', data.message);
+    } else {
+        jogosDaAPI = Array.isArray(data.matches) ? data.matches : [];
+        console.log(`🌐 Football-Data retornou ${jogosDaAPI.length} jogo(s) finalizado(s).`);
+    }
+
+} catch (apiError) {
+    console.warn(
+        '⚠️ Football-Data indisponível nesta execução. ' +
+        'O cron seguirá apenas com os jogos manuais do controle_processamento_jogos.',
+        apiError.message || apiError
+    );
+}
+
+const todosJogosFinalizados = [...jogosDaAPI];
 
         // MÁGICA DO ROLLBACK: Verifica se você deletou ou alterou um jogo manual no Cloudant
         const estadoAtualManuais = JSON.stringify(controleDoc.jogos_manuais);
