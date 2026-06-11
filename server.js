@@ -766,60 +766,6 @@ if (documentosParaAtualizar.length > 0) {
 } else {
     console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
 }
-    const controleAtualizado = (await executarComRetry(
-        () => cloudant.getDocument({
-            db: DB_NAME,
-            docId: ID_CONTROLE_JOGOS
-        }),
-        'Buscar _rev atual do controle antes do putDocument',
-        5,
-        1500
-    )).result;
-
-    if (!Array.isArray(controleAtualizado.jogos_processados)) {
-        controleAtualizado.jogos_processados = [];
-    }
-
-    const processadosMesclados = new Set([
-        ...controleAtualizado.jogos_processados.map(id => String(id)),
-        ...controleDoc.jogos_processados.map(id => String(id))
-    ]);
-
-    controleAtualizado.jogos_processados = Array.from(processadosMesclados);
-
-    const estadoManualBanco = JSON.stringify(controleAtualizado.jogos_manuais || []);
-    const estadoManualProcessado = JSON.stringify(controleDoc.jogos_manuais || []);
-
-    if (estadoManualBanco === estadoManualProcessado) {
-        controleAtualizado.ultimo_estado_manuais = controleDoc.ultimo_estado_manuais;
-    } else {
-        console.warn(
-            '⚠️ jogos_manuais mudou enquanto o cron rodava. ' +
-            'Não atualizei ultimo_estado_manuais para não mascarar uma alteração nova.'
-        );
-    }
-
-    controleAtualizado.type = controleAtualizado.type || 'config';
-
-    await executarComRetry(
-        () => cloudant.putDocument({
-            db: DB_NAME,
-            docId: controleAtualizado._id,
-            document: controleAtualizado
-        }),
-        'Salvar controle_processamento_jogos com _rev atual',
-        5,
-        1500
-    );
-
-    rankingCache = { pontos: null, recorde: null };
-    ultimaAtualizacaoCache = 0;
-
-    console.log('✅ Jogos registrados no controle. Nenhuma cartela sofreu alteração.');
-
-} else {
-    console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
-}
         
     } catch (error) {
         console.error('❌ Erro no Cron Job:', error);
