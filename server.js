@@ -371,16 +371,39 @@ cron.schedule('*/10 * * * *', async () => {
     };
     
     try {
-        let controleDoc;
-        try {
-            controleDoc = (await cloudant.getDocument({ db: DB_NAME, docId: ID_CONTROLE_JOGOS })).result;
-            if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
+    let controleDoc;
+    let forcarGravacaoTotal = false;
 
-            const forcarGravacaoTotal = controleDoc.forcar_gravacao_total === true;
-        } catch (e) {
-            controleDoc = { _id: ID_CONTROLE_JOGOS, jogos_processados: [], jogos_manuais: [], ultimo_estado_manuais: "[]", type: "config" };
-            await cloudant.postDocument({ db: DB_NAME, document: controleDoc });
+    try {
+        controleDoc = (await cloudant.getDocument({
+            db: DB_NAME,
+            docId: ID_CONTROLE_JOGOS
+        })).result;
+
+        if (!controleDoc.jogos_manuais) controleDoc.jogos_manuais = [];
+        if (!controleDoc.jogos_processados) controleDoc.jogos_processados = [];
+
+        forcarGravacaoTotal = controleDoc.forcar_gravacao_total === true;
+
+        if (forcarGravacaoTotal) {
+            console.log('🚨 MODO EMERGÊNCIA ATIVO: forcar_gravacao_total=true. Todas as cartelas lidas serão gravadas novamente.');
         }
+
+    } catch (e) {
+        controleDoc = {
+            _id: ID_CONTROLE_JOGOS,
+            jogos_processados: [],
+            jogos_manuais: [],
+            ultimo_estado_manuais: "[]",
+            type: "config",
+            forcar_gravacao_total: false
+        };
+
+        await cloudant.postDocument({
+            db: DB_NAME,
+            document: controleDoc
+        });
+    }
 
         // =====================================================================
 // BUSCA DOS JOGOS FINALIZADOS NA FOOTBALL-DATA
@@ -623,9 +646,10 @@ todosJogosFinalizados.forEach(jogo => {
 if (documentosParaAtualizar.length > 0) {
     const documentosParaSalvar = [...documentosParaAtualizar];
 
-    if (controleModificado) {
-        // Busca a _rev mais recente do controle antes de colocar no bulkDocs.
-        // Isso mantém o controle no mesmo lugar do fluxo, mas evita conflict por _rev antiga.
+    // Atualiza o controle também quando:
+    // 1) houve alteração normal no controle; OU
+    // 2) o modo emergencial de gravação total estava ativo.
+    if (controleModificado || forcarGravacaoTotal) {
         const controleAtualizado = (await executarComRetry(
             () => cloudant.getDocument({
                 db: DB_NAME,
@@ -661,6 +685,12 @@ if (documentosParaAtualizar.length > 0) {
 
         controleAtualizado.type = controleAtualizado.type || 'config';
 
+        if (forcarGravacaoTotal) {
+            controleAtualizado.forcar_gravacao_total = false;
+            controleAtualizado.ultimo_reprocessamento_forcado = new Date().toISOString();
+            console.log('✅ Modo emergência será desligado no controle: forcar_gravacao_total=false.');
+        }
+
         documentosParaSalvar.push(controleAtualizado);
     }
 
@@ -672,10 +702,70 @@ if (documentosParaAtualizar.length > 0) {
     console.log(
         `📦 Atualização/Rollback concluído! ` +
         `${documentosParaAtualizar.length} cartela(s) salvas. ` +
-        `${controleModificado ? 'Controle atualizado.' : 'Controle sem alteração.'}`
+        `${controleModificado || forcarGravacaoTotal ? 'Controle atualizado.' : 'Controle sem alteração.'}`
     );
 
-} else if (controleModificado) {
+} else if (controleModificado || forcarGravacaoTotal) {
+    const controleAtualizado = (await executarComRetry(
+        () => cloudant.getDocument({
+            db: DB_NAME,
+            docId: ID_CONTROLE_JOGOS
+        }),
+        'Buscar _rev atual do controle antes do putDocument',
+        5,
+        1500
+    )).result;
+
+    if (!Array.isArray(controleAtualizado.jogos_processados)) {
+        controleAtualizado.jogos_processados = [];
+    }
+
+    const processadosMesclados = new Set([
+        ...controleAtualizado.jogos_processados.map(id => String(id)),
+        ...controleDoc.jogos_processados.map(id => String(id))
+    ]);
+
+    controleAtualizado.jogos_processados = Array.from(processadosMesclados);
+
+    const estadoManualBanco = JSON.stringify(controleAtualizado.jogos_manuais || []);
+    const estadoManualProcessado = JSON.stringify(controleDoc.jogos_manuais || []);
+
+    if (estadoManualBanco === estadoManualProcessado) {
+        controleAtualizado.ultimo_estado_manuais = controleDoc.ultimo_estado_manuais;
+    } else {
+        console.warn(
+            '⚠️ jogos_manuais mudou enquanto o cron rodava. ' +
+            'Não atualizei ultimo_estado_manuais para não mascarar uma alteração nova.'
+        );
+    }
+
+    controleAtualizado.type = controleAtualizado.type || 'config';
+
+    if (forcarGravacaoTotal) {
+        controleAtualizado.forcar_gravacao_total = false;
+        controleAtualizado.ultimo_reprocessamento_forcado = new Date().toISOString();
+        console.log('✅ Modo emergência desligado no controle, mesmo sem cartelas alteradas.');
+    }
+
+    await executarComRetry(
+        () => cloudant.putDocument({
+            db: DB_NAME,
+            docId: controleAtualizado._id,
+            document: controleAtualizado
+        }),
+        'Salvar controle_processamento_jogos com _rev atual',
+        5,
+        1500
+    );
+
+    rankingCache = { pontos: null, recorde: null };
+    ultimaAtualizacaoCache = 0;
+
+    console.log('✅ Controle atualizado. Nenhuma cartela sofreu alteração.');
+
+} else {
+    console.log('✅ Tudo certo. Nenhuma alteração nova identificada.');
+}
     const controleAtualizado = (await executarComRetry(
         () => cloudant.getDocument({
             db: DB_NAME,
