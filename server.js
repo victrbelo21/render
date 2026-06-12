@@ -1237,7 +1237,7 @@ app.get('/ranking', async (req, res) => {
         const response = await cloudant.postFind({
           db: DB_NAME,
           selector: { type: { "$eq": "cartela_usuario" } },
-          limit: 2000 // Configurado para engolir com folga os seus 1000 usuários estimados
+          limit: 3500 // Configurado para engolir com folga os seus 3000 usuários estimados
         });
 
         // Mapeamento limpo da base de dados
