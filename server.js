@@ -120,7 +120,7 @@ const dicionarioTimes = {
     "australia": "australia",
     "austria": "austria",
     "belgica": "belgium",
-    "bosnia e herzegovina": "bosnia and herzegovina",
+    "bosnia e herzegovina": "bosnia-herzegovina",
     "brasil": "brazil",
     "cabo verde": "cape verde",
     "canada": "canada",
