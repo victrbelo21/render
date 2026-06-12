@@ -152,7 +152,7 @@ const dicionarioTimes = {
     "portugal": "portugal",
     "rep da coreia": "south korea",
     "rd do congo": "dr congo",
-    "tchequia": "czech republic",
+    "tchequia": "czechia",
     "senegal": "senegal",
     "suecia": "sweden",
     "suica": "switzerland",
