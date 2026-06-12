@@ -120,7 +120,7 @@ const dicionarioTimes = {
     "australia": "australia",
     "austria": "austria",
     "belgica": "belgium",
-    "bosnia e herzegovina": "bosnia-herzegovina",
+    "bosnia e herzegovina": "bosnia herzegovina",
     "brasil": "brazil",
     "cabo verde": "cape verde",
     "canada": "canada",
@@ -242,7 +242,7 @@ cron.schedule('*/14 * * * *', async () => {
 });
 
 // TRABALHADOR INVISÍVEL - Recálculo Contínuo de Resultados
-cron.schedule('*/30 * * * *', async () => {
+cron.schedule('*/10 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
 
     const aguardar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
