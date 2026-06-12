@@ -1911,49 +1911,298 @@ app.get('/estatisticas/standings', async (req, res) => {
         const agora = Date.now();
 
         // Verificação de Cache ativo de 3 horas
-        if (estatisticasCache.standings[lang] && (agora - estatisticasCache.standings.timestamp[lang] < CACHE_TTL_ESTATISTICAS)) {
+        if (
+            estatisticasCache.standings[lang] &&
+            (agora - estatisticasCache.standings.timestamp[lang] < CACHE_TTL_ESTATISTICAS)
+        ) {
             console.log(`⚡ [Cache-Estatísticas] Servindo Classificação FIFA [${lang.toUpperCase()}] direto da memória.`);
             return res.status(200).json(estatisticasCache.standings[lang]);
         }
 
         console.log(`📊 Cache expirado ou vazio! Buscando tabela oficial na API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
-        const fifaUrl = `https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=${lang}&count=200`;
-        const response = await fetch(fifaUrl);
-        if (!response.ok) throw new Error(`A FIFA bloqueou com status: ${response.status}`);
-        
-        const data = await response.json();
+
+        const fifaLanguage = lang === 'es' ? 'es' : 'pt-BR';
+
+        const fetchJsonSeguro = async (url, contexto) => {
+            const response = await fetch(url, {
+                headers: {
+                    "accept": "application/json, text/plain, */*",
+                    "accept-language": lang === 'es'
+                        ? "es-ES,es;q=0.9,en;q=0.8"
+                        : "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "User-Agent": "Mozilla/5.0"
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`${contexto} bloqueou com status: ${response.status}`);
+            }
+
+            return response.json();
+        };
+
+        const extrairIdTime = (team) => {
+            if (!team) return null;
+
+            return String(
+                team.IdTeam ||
+                team.idTeam ||
+                team.IdCountry ||
+                team.idCountry ||
+                team.Id ||
+                team.id ||
+                team.TeamId ||
+                team.teamId ||
+                ''
+            ).trim() || null;
+        };
+
+        const extrairDescricao = (lista, fallback = '') => {
+            if (!Array.isArray(lista) || lista.length === 0) return fallback;
+
+            const preferida =
+                lista.find(item => item.Locale === 'pt-BR') ||
+                lista.find(item => item.Locale === 'es') ||
+                lista.find(item => item.Locale === 'en') ||
+                lista[0];
+
+            return preferida?.Description || fallback;
+        };
+
+        const isNumeroValido = (valor) => {
+            return valor !== null && valor !== undefined && valor !== '' && !Number.isNaN(Number(valor));
+        };
+
+        const getResultadoDoJogoParaTime = (match, teamId) => {
+            const homeId = extrairIdTime(match.HomeTeam);
+            const awayId = extrairIdTime(match.AwayTeam);
+
+            if (!homeId || !awayId || !teamId) return null;
+
+            const homeScore =
+                isNumeroValido(match.HomeTeamScore) ? Number(match.HomeTeamScore) :
+                isNumeroValido(match.HomeTeam?.Score) ? Number(match.HomeTeam.Score) :
+                null;
+
+            const awayScore =
+                isNumeroValido(match.AwayTeamScore) ? Number(match.AwayTeamScore) :
+                isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeam.Score) :
+                null;
+
+            // Se ainda não tem placar, o jogo não entrou na forma.
+            if (homeScore === null || awayScore === null) return null;
+
+            const winner = match.Winner ? String(match.Winner) : null;
+
+            // Empate
+            if (homeScore === awayScore) return 'D';
+
+            // Se a FIFA informou o Winner, usamos ele.
+            if (winner) {
+                if (String(teamId) === winner) return 'W';
+                if (String(teamId) === homeId || String(teamId) === awayId) return 'L';
+            }
+
+            // Fallback pelo placar
+            if (String(teamId) === homeId) {
+                return homeScore > awayScore ? 'W' : 'L';
+            }
+
+            if (String(teamId) === awayId) {
+                return awayScore > homeScore ? 'W' : 'L';
+            }
+
+            return null;
+        };
+
+        const montarMapaUltimosResultados = async () => {
+            const urlsCalendario = [
+                `https://api.fifa.com/api/v3/calendar/17/285023?language=${fifaLanguage}&count=500`,
+                `https://api.fifa.com/api/v3/calendar/17/285023/289273?language=${fifaLanguage}&count=500`
+            ];
+
+            let calendarioData = null;
+
+            for (const url of urlsCalendario) {
+                try {
+                    const tentativa = await fetchJsonSeguro(url, 'Calendário FIFA');
+
+                    if (tentativa?.GroupsStages || tentativa?.Groups || tentativa?.Matches) {
+                        calendarioData = tentativa;
+                        console.log(`✅ Calendário FIFA carregado para últimos resultados: ${url}`);
+                        break;
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Não consegui carregar calendário por esta URL: ${url}`, error.message);
+                }
+            }
+
+            const mapa = new Map();
+
+            if (!calendarioData) {
+                console.warn('⚠️ Não foi possível carregar calendário FIFA. Últimos resultados ficarão como "-".');
+                return mapa;
+            }
+
+            const matches = [];
+
+            // Estrutura igual ao preview do F12:
+            // GroupsStages -> Groups -> Matches
+            if (Array.isArray(calendarioData.GroupsStages)) {
+                calendarioData.GroupsStages.forEach(stage => {
+                    (stage.Groups || []).forEach(group => {
+                        (group.Matches || []).forEach(match => {
+                            matches.push({
+                                ...match,
+                                _idGrupo: group.IdGroup,
+                                _nomeGrupo: extrairDescricao(group.Name, '')
+                            });
+                        });
+                    });
+
+                    (stage.Matches || []).forEach(match => {
+                        matches.push(match);
+                    });
+                });
+            }
+
+            // Fallbacks, caso a FIFA mude a estrutura.
+            if (Array.isArray(calendarioData.Groups)) {
+                calendarioData.Groups.forEach(group => {
+                    (group.Matches || []).forEach(match => {
+                        matches.push({
+                            ...match,
+                            _idGrupo: group.IdGroup,
+                            _nomeGrupo: extrairDescricao(group.Name, '')
+                        });
+                    });
+                });
+            }
+
+            if (Array.isArray(calendarioData.Matches)) {
+                calendarioData.Matches.forEach(match => matches.push(match));
+            }
+
+            console.log(`🧮 ${matches.length} jogo(s) encontrados no calendário FIFA para montar últimos resultados.`);
+
+            matches
+                .filter(match => {
+                    const homeId = extrairIdTime(match.HomeTeam);
+                    const awayId = extrairIdTime(match.AwayTeam);
+
+                    const homeScore =
+                        isNumeroValido(match.HomeTeamScore) ? Number(match.HomeTeamScore) :
+                        isNumeroValido(match.HomeTeam?.Score) ? Number(match.HomeTeam.Score) :
+                        null;
+
+                    const awayScore =
+                        isNumeroValido(match.AwayTeamScore) ? Number(match.AwayTeamScore) :
+                        isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeamScore) :
+                        isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeam.Score) :
+                        null;
+
+                    return homeId && awayId && homeScore !== null && awayScore !== null;
+                })
+                .sort((a, b) => {
+                    const dataA = new Date(a.Date || a.LocalDate || 0).getTime();
+                    const dataB = new Date(b.Date || b.LocalDate || 0).getTime();
+                    return dataB - dataA;
+                })
+                .forEach(match => {
+                    const homeId = extrairIdTime(match.HomeTeam);
+                    const awayId = extrairIdTime(match.AwayTeam);
+
+                    [homeId, awayId].forEach(teamId => {
+                        if (!teamId) return;
+
+                        const resultado = getResultadoDoJogoParaTime(match, teamId);
+                        if (!resultado) return;
+
+                        if (!mapa.has(teamId)) mapa.set(teamId, []);
+
+                        const lista = mapa.get(teamId);
+
+                        if (lista.length < 5) {
+                            lista.push(resultado);
+                        }
+                    });
+                });
+
+            for (const [teamId, lista] of mapa.entries()) {
+                while (lista.length < 5) lista.push('-');
+                mapa.set(teamId, lista.slice(0, 5));
+            }
+
+            return mapa;
+        };
+
+        const fifaUrl = `https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=${fifaLanguage}&count=200`;
+        const data = await fetchJsonSeguro(fifaUrl, 'Classificação FIFA');
+
         const tabelaLimpa = {};
         const resultados = data.Results || [];
+        const mapaUltimosResultados = await montarMapaUltimosResultados();
 
         if (resultados.length > 0) {
             resultados.forEach(item => {
                 const nomeGrupo = item.Group?.[0]?.Description || 'A';
-                const letraGrupo = nomeGrupo.replace('Grupo ', '').replace('Group ', '').trim();
+                const letraGrupo = nomeGrupo
+                    .replace('Grupo ', '')
+                    .replace('Group ', '')
+                    .trim();
+
                 if (!tabelaLimpa[letraGrupo]) tabelaLimpa[letraGrupo] = [];
-                
+
+                const teamId = extrairIdTime(item.Team);
+                const ultimosResultados = teamId && mapaUltimosResultados.has(teamId)
+                    ? mapaUltimosResultados.get(teamId)
+                    : ['-', '-', '-', '-', '-'];
+
                 tabelaLimpa[letraGrupo].push({
-                    posicao: item.Position, 
+                    posicao: item.Position,
+                    idTime: teamId,
                     time: item.Team?.Name?.[0]?.Description || 'A definir',
                     escudo: item.Team?.PictureUrl || `https://ui-avatars.com/api/?name=${item.Team?.IdCountry || 'FIFA'}&background=f2f4f8`,
-                    pontos: item.Points || 0, jogos: item.Played || 0, vitorias: item.Won || 0,
-                    empates: item.Drawn || 0, derrotas: item.Lost || 0, golsPro: item.GoalsFor || 0,
-                    golsContra: item.GoalsAgainst || 0, saldo: item.GoalDifference || 0
+                    pontos: item.Points || 0,
+                    jogos: item.Played || 0,
+                    vitorias: item.Won || 0,
+                    empates: item.Drawn || 0,
+                    derrotas: item.Lost || 0,
+                    golsPro: item.GoalsFor || 0,
+                    golsContra: item.GoalsAgainst || 0,
+                    saldo: item.GoalDifference || 0,
+                    ultimosResultados
                 });
             });
 
-            for (const grupo in tabelaLimpa) tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
-            
-            const respostaFinal = { success: true, grupos: tabelaLimpa, status: 'ativo' };
-            
-            // Alimenta o cache com carimbo de hora atualizado
+            for (const grupo in tabelaLimpa) {
+                tabelaLimpa[grupo].sort((a, b) => a.posicao - b.posicao);
+            }
+
+            const respostaFinal = {
+                success: true,
+                grupos: tabelaLimpa,
+                status: 'ativo'
+            };
+
             estatisticasCache.standings[lang] = respostaFinal;
             estatisticasCache.standings.timestamp[lang] = agora;
 
             res.status(200).json(respostaFinal);
         } else {
-            res.status(200).json({ success: true, grupos: {}, status: 'aguardando_sorteio' });
+            res.status(200).json({
+                success: true,
+                grupos: {},
+                status: 'aguardando_sorteio'
+            });
         }
-    } catch (error) { res.status(500).json({ success: false, error: 'Erro ao extrair classificação da FIFA.' }); }
+    } catch (error) {
+        console.error('❌ Erro ao extrair classificação da FIFA:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao extrair classificação da FIFA.'
+        });
+    }
 });
 
 app.get('/estatisticas/chaveamento', async (req, res) => {
