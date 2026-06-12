@@ -681,6 +681,31 @@ console.log(`🎯 Varrendo cartelas (Alteração manual ou novos jogos detectado
 const cartelas = await buscarCartelasEmLotes(3000, 150, 1000);
 const documentosParaAtualizar = [];
 
+// Guarda quais jogos oficiais realmente deram match com pelo menos um palpite.
+// Isso evita marcar um jogo oficial como processado se ele veio da API,
+// mas não foi encontrado dentro das cartelas.
+const jogosOficiaisComMatch = new Set();
+
+// Guarda estatísticas para sabermos exatamente o que aconteceu com cada jogo oficial.
+const estatisticasJogosOficiais = {};
+
+jogosOficiais.forEach(jogo => {
+    if (jogo.isManual) return;
+
+    const jogoId = String(jogo.id);
+
+    estatisticasJogosOficiais[jogoId] = {
+        id: jogoId,
+        data_jogo: formatarDataISO(jogo.utcDate),
+        time_1: jogo.homeTeam?.name || '',
+        time_2: jogo.awayTeam?.name || '',
+        placar_1: jogo.score?.fullTime?.home,
+        placar_2: jogo.score?.fullTime?.away,
+        palpitesEncontrados: 0,
+        cartelasAlteradas: 0
+    };
+});
+
 console.log(`🎟️ Total de cartelas carregadas para recálculo: ${cartelas.length}`);
 
 for (let doc of cartelas) {
@@ -734,6 +759,19 @@ for (let doc of cartelas) {
             );
 
             if (precisaCalcular) {
+                const jogoIdProcessado = String(jogoFinalizado.id);
+
+                // Se for jogo oficial vindo da Football-Data e deu match com um palpite,
+                // registramos isso antes de qualquer cálculo.
+                // Assim o controle só marca como processado se pelo menos um palpite foi encontrado.
+                if (!jogoFinalizado.isManual) {
+                    jogosOficiaisComMatch.add(jogoIdProcessado);
+
+                    if (estatisticasJogosOficiais[jogoIdProcessado]) {
+                        estatisticasJogosOficiais[jogoIdProcessado].palpitesEncontrados++;
+                    }
+                }
+
                 // === NOVA LÓGICA DE PONTUAÇÃO ===
                 const palpite1 = palpite.placar_1;
                 const palpite2 = palpite.placar_2;
@@ -772,6 +810,10 @@ for (let doc of cartelas) {
                     palpite.placar_oficial_1 = placarReal1;
                     palpite.placar_oficial_2 = placarReal2;
                     houveMudancaInterna = true;
+
+                    if (!jogoFinalizado.isManual && estatisticasJogosOficiais[jogoIdProcessado]) {
+                        estatisticasJogosOficiais[jogoIdProcessado].cartelasAlteradas++;
+                    }
                 }
             }
         } else {
@@ -787,18 +829,30 @@ for (let doc of cartelas) {
     });
 
     if (doc.pontos_acumulados !== pontosTotalCalculado || houveMudancaInterna || forcarGravacaoTotal) {
-    doc.pontos_acumulados = pontosTotalCalculado;
+        doc.pontos_acumulados = pontosTotalCalculado;
 
-    if (forcarGravacaoTotal && !houveMudancaInterna) {
-        doc.timestamp_reprocessamento_forcado = new Date().toISOString();
+        if (forcarGravacaoTotal && !houveMudancaInterna) {
+            doc.timestamp_reprocessamento_forcado = new Date().toISOString();
+        }
+
+        documentosParaAtualizar.push(doc);
     }
-
-    documentosParaAtualizar.push(doc);
-}
 }
 
-// Atualiza controle de jogos processados com IDs normalizados
+// Atualiza controle de jogos processados com IDs normalizados.
+// Agora, jogo oficial só entra em jogos_processados se realmente deu match
+// com pelo menos um palpite nas cartelas.
 let controleModificado = teveAlteracaoManual;
+
+Object.values(estatisticasJogosOficiais).forEach(info => {
+    console.log(
+        `📊 Match oficial ID=${info.id} | ` +
+        `${info.time_1} ${info.placar_1} x ${info.placar_2} ${info.time_2} | ` +
+        `data=${info.data_jogo} | ` +
+        `palpites encontrados=${info.palpitesEncontrados} | ` +
+        `cartelas alteradas=${info.cartelasAlteradas}`
+    );
+});
 
 todosJogosFinalizados.forEach(jogo => {
     if (jogo.isManual) return;
@@ -806,9 +860,35 @@ todosJogosFinalizados.forEach(jogo => {
     const jogoId = String(jogo.id);
 
     if (!jogosProcessadosNormalizados.has(jogoId)) {
+        if (!jogosOficiaisComMatch.has(jogoId)) {
+            const home = jogo.homeTeam?.name || 'Home indefinido';
+            const away = jogo.awayTeam?.name || 'Away indefinido';
+            const placarHome = jogo.score?.fullTime?.home;
+            const placarAway = jogo.score?.fullTime?.away;
+
+            console.warn(
+                `🚫 NÃO marquei o jogo oficial como processado porque ele não deu match em nenhuma cartela: ` +
+                `ID=${jogoId} | ${home} ${placarHome} x ${placarAway} ${away} | ` +
+                `utcDate=${jogo.utcDate}. ` +
+                `Provável problema de nome dos times, ordem ou data_jogo.`
+            );
+
+            return;
+        }
+
         controleDoc.jogos_processados.push(jogoId);
         jogosProcessadosNormalizados.add(jogoId);
         controleModificado = true;
+
+        const home = jogo.homeTeam?.name || 'Home indefinido';
+        const away = jogo.awayTeam?.name || 'Away indefinido';
+        const placarHome = jogo.score?.fullTime?.home;
+        const placarAway = jogo.score?.fullTime?.away;
+
+        console.log(
+            `✅ Jogo oficial confirmado e marcado como processado: ` +
+            `ID=${jogoId} | ${home} ${placarHome} x ${placarAway} ${away}`
+        );
     }
 });
 
