@@ -126,7 +126,7 @@ const dicionarioTimes = {
     "canada": "canada",
     "catar": "qatar",
     "colombia": "colombia",
-    "costa do marfim": "ivory coast", 
+    "costa do marfim": "côte d’ivoire", 
     "croacia": "croatia",
     "curacau": "curacao",
     "egito": "egypt",
