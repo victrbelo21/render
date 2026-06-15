@@ -1922,7 +1922,8 @@ app.get('/estatisticas/standings', async (req, res) => {
 
         console.log(`📊 Cache expirado ou vazio! Buscando tabela oficial na API da FIFA [Idioma: ${lang.toUpperCase()}]...`);
 
-        const fifaLanguage = lang === 'es' ? 'es' : 'pt-BR';
+        // Pela captura do F12, a FIFA usa language=pt e não pt-BR nesse endpoint
+        const fifaLanguage = lang === 'es' ? 'es' : 'pt';
 
         const fetchJsonSeguro = async (url, contexto) => {
             const response = await fetch(url, {
@@ -1942,20 +1943,11 @@ app.get('/estatisticas/standings', async (req, res) => {
             return response.json();
         };
 
-        const extrairIdTime = (team) => {
-            if (!team) return null;
-
-            return String(
-                team.IdTeam ||
-                team.idTeam ||
-                team.IdCountry ||
-                team.idCountry ||
-                team.Id ||
-                team.id ||
-                team.TeamId ||
-                team.teamId ||
-                ''
-            ).trim() || null;
+        const isNumeroValido = (valor) => {
+            return valor !== null &&
+                   valor !== undefined &&
+                   valor !== '' &&
+                   !Number.isNaN(Number(valor));
         };
 
         const extrairDescricao = (lista, fallback = '') => {
@@ -1963,6 +1955,7 @@ app.get('/estatisticas/standings', async (req, res) => {
 
             const preferida =
                 lista.find(item => item.Locale === 'pt-BR') ||
+                lista.find(item => item.Locale === 'pt') ||
                 lista.find(item => item.Locale === 'es') ||
                 lista.find(item => item.Locale === 'en') ||
                 lista[0];
@@ -1970,209 +1963,105 @@ app.get('/estatisticas/standings', async (req, res) => {
             return preferida?.Description || fallback;
         };
 
-        const isNumeroValido = (valor) => {
-            return valor !== null && valor !== undefined && valor !== '' && !Number.isNaN(Number(valor));
+        const extrairIdTime = (item) => {
+            if (!item) return '';
+
+            return String(
+                item.IdTeam ||
+                item.Team?.IdTeam ||
+                item.idTeam ||
+                item.TeamId ||
+                item.teamId ||
+                item.Id ||
+                item.id ||
+                ''
+            ).trim();
         };
 
-        const getResultadoDoJogoParaTime = (match, teamId) => {
-            const homeId = extrairIdTime(match.HomeTeam);
-            const awayId = extrairIdTime(match.AwayTeam);
+        const montarUltimosResultadosFIFA = (item, limite = 5) => {
+            const idTime = extrairIdTime(item);
 
-            if (!homeId || !awayId || !teamId) return null;
-
-            const homeScore =
-                isNumeroValido(match.HomeTeamScore) ? Number(match.HomeTeamScore) :
-                isNumeroValido(match.HomeTeam?.Score) ? Number(match.HomeTeam.Score) :
-                null;
-
-            const awayScore =
-                isNumeroValido(match.AwayTeamScore) ? Number(match.AwayTeamScore) :
-                isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeam.Score) :
-                null;
-
-            // Se ainda não tem placar, o jogo não entrou na forma.
-            if (homeScore === null || awayScore === null) return null;
-
-            const winner = match.Winner ? String(match.Winner) : null;
-
-            // Empate
-            if (homeScore === awayScore) return 'D';
-
-            // Se a FIFA informou o Winner, usamos ele.
-            if (winner) {
-                if (String(teamId) === winner) return 'W';
-                if (String(teamId) === homeId || String(teamId) === awayId) return 'L';
+            if (!idTime || !Array.isArray(item.MatchResults)) {
+                return ['-', '-', '-', '-', '-'];
             }
 
-            // Fallback pelo placar
-            if (String(teamId) === homeId) {
-                return homeScore > awayScore ? 'W' : 'L';
-            }
+            const resultados = item.MatchResults
+                // Ignora jogos futuros sem placar
+                .filter(match =>
+                    isNumeroValido(match.HomeTeamScore) &&
+                    isNumeroValido(match.AwayTeamScore)
+                )
+                // Garante ordem cronológica
+                .sort((a, b) => new Date(a.StartTime) - new Date(b.StartTime))
+                // Pega os últimos jogos finalizados
+                .slice(-limite)
+                .map(match => {
+                    const isHome = String(match.HomeTeamId) === idTime;
+                    const isAway = String(match.AwayTeamId) === idTime;
 
-            if (String(teamId) === awayId) {
-                return awayScore > homeScore ? 'W' : 'L';
-            }
+                    if (!isHome && !isAway) return null;
 
-            return null;
-        };
+                    const golsTime = Number(isHome ? match.HomeTeamScore : match.AwayTeamScore);
+                    const golsAdversario = Number(isHome ? match.AwayTeamScore : match.HomeTeamScore);
 
-        const montarMapaUltimosResultados = async () => {
-            const urlsCalendario = [
-                `https://api.fifa.com/api/v3/calendar/17/285023?language=${fifaLanguage}&count=500`,
-                `https://api.fifa.com/api/v3/calendar/17/285023/289273?language=${fifaLanguage}&count=500`
-            ];
-
-            let calendarioData = null;
-
-            for (const url of urlsCalendario) {
-                try {
-                    const tentativa = await fetchJsonSeguro(url, 'Calendário FIFA');
-
-                    if (tentativa?.GroupsStages || tentativa?.Groups || tentativa?.Matches) {
-                        calendarioData = tentativa;
-                        console.log(`✅ Calendário FIFA carregado para últimos resultados: ${url}`);
-                        break;
-                    }
-                } catch (error) {
-                    console.warn(`⚠️ Não consegui carregar calendário por esta URL: ${url}`, error.message);
-                }
-            }
-
-            const mapa = new Map();
-
-            if (!calendarioData) {
-                console.warn('⚠️ Não foi possível carregar calendário FIFA. Últimos resultados ficarão como "-".');
-                return mapa;
-            }
-
-            const matches = [];
-
-            // Estrutura igual ao preview do F12:
-            // GroupsStages -> Groups -> Matches
-            if (Array.isArray(calendarioData.GroupsStages)) {
-                calendarioData.GroupsStages.forEach(stage => {
-                    (stage.Groups || []).forEach(group => {
-                        (group.Matches || []).forEach(match => {
-                            matches.push({
-                                ...match,
-                                _idGrupo: group.IdGroup,
-                                _nomeGrupo: extrairDescricao(group.Name, '')
-                            });
-                        });
-                    });
-
-                    (stage.Matches || []).forEach(match => {
-                        matches.push(match);
-                    });
-                });
-            }
-
-            // Fallbacks, caso a FIFA mude a estrutura.
-            if (Array.isArray(calendarioData.Groups)) {
-                calendarioData.Groups.forEach(group => {
-                    (group.Matches || []).forEach(match => {
-                        matches.push({
-                            ...match,
-                            _idGrupo: group.IdGroup,
-                            _nomeGrupo: extrairDescricao(group.Name, '')
-                        });
-                    });
-                });
-            }
-
-            if (Array.isArray(calendarioData.Matches)) {
-                calendarioData.Matches.forEach(match => matches.push(match));
-            }
-
-            console.log(`🧮 ${matches.length} jogo(s) encontrados no calendário FIFA para montar últimos resultados.`);
-
-            matches
-                .filter(match => {
-                    const homeId = extrairIdTime(match.HomeTeam);
-                    const awayId = extrairIdTime(match.AwayTeam);
-
-                    const homeScore =
-                        isNumeroValido(match.HomeTeamScore) ? Number(match.HomeTeamScore) :
-                        isNumeroValido(match.HomeTeam?.Score) ? Number(match.HomeTeam.Score) :
-                        null;
-
-                    const awayScore =
-                        isNumeroValido(match.AwayTeamScore) ? Number(match.AwayTeamScore) :
-                        isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeamScore) :
-                        isNumeroValido(match.AwayTeam?.Score) ? Number(match.AwayTeam.Score) :
-                        null;
-
-                    return homeId && awayId && homeScore !== null && awayScore !== null;
+                    if (golsTime > golsAdversario) return 'V';
+                    if (golsTime < golsAdversario) return 'D';
+                    return 'E';
                 })
-                .sort((a, b) => {
-                    const dataA = new Date(a.Date || a.LocalDate || 0).getTime();
-                    const dataB = new Date(b.Date || b.LocalDate || 0).getTime();
-                    return dataB - dataA;
-                })
-                .forEach(match => {
-                    const homeId = extrairIdTime(match.HomeTeam);
-                    const awayId = extrairIdTime(match.AwayTeam);
+                .filter(Boolean);
 
-                    [homeId, awayId].forEach(teamId => {
-                        if (!teamId) return;
-
-                        const resultado = getResultadoDoJogoParaTime(match, teamId);
-                        if (!resultado) return;
-
-                        if (!mapa.has(teamId)) mapa.set(teamId, []);
-
-                        const lista = mapa.get(teamId);
-
-                        if (lista.length < 5) {
-                            lista.push(resultado);
-                        }
-                    });
-                });
-
-            for (const [teamId, lista] of mapa.entries()) {
-                while (lista.length < 5) lista.push('-');
-                mapa.set(teamId, lista.slice(0, 5));
+            while (resultados.length < limite) {
+                resultados.push('-');
             }
 
-            return mapa;
+            return resultados.slice(0, limite);
         };
 
         const fifaUrl = `https://api.fifa.com/api/v3/calendar/17/285023/289273/standing?language=${fifaLanguage}&count=200`;
         const data = await fetchJsonSeguro(fifaUrl, 'Classificação FIFA');
 
         const tabelaLimpa = {};
-        const resultados = data.Results || [];
-        const mapaUltimosResultados = await montarMapaUltimosResultados();
+        const resultados = data?.Results || [];
 
         if (resultados.length > 0) {
             resultados.forEach(item => {
-                const nomeGrupo = item.Group?.[0]?.Description || 'A';
+                const nomeGrupo =
+                    extrairDescricao(item.Group, '') ||
+                    item.Group?.[0]?.Description ||
+                    'Grupo A';
+
                 const letraGrupo = nomeGrupo
                     .replace('Grupo ', '')
                     .replace('Group ', '')
                     .trim();
 
-                if (!tabelaLimpa[letraGrupo]) tabelaLimpa[letraGrupo] = [];
+                if (!tabelaLimpa[letraGrupo]) {
+                    tabelaLimpa[letraGrupo] = [];
+                }
 
-                const teamId = extrairIdTime(item.Team);
-                const ultimosResultados = teamId && mapaUltimosResultados.has(teamId)
-                    ? mapaUltimosResultados.get(teamId)
-                    : ['-', '-', '-', '-', '-'];
+                const idTime = extrairIdTime(item);
 
                 tabelaLimpa[letraGrupo].push({
-                    posicao: item.Position,
-                    idTime: teamId,
-                    time: item.Team?.Name?.[0]?.Description || 'A definir',
+                    posicao: item.Position || 0,
+                    idTime,
+
+                    time: extrairDescricao(item.Team?.Name, 'A definir'),
+                    sigla: item.Team?.Abbreviation || item.Team?.IdCountry || '',
                     escudo: item.Team?.PictureUrl || `https://ui-avatars.com/api/?name=${item.Team?.IdCountry || 'FIFA'}&background=f2f4f8`,
-                    pontos: item.Points || 0,
-                    jogos: item.Played || 0,
-                    vitorias: item.Won || 0,
-                    empates: item.Drawn || 0,
-                    derrotas: item.Lost || 0,
-                    golsPro: item.GoalsFor || 0,
-                    golsContra: item.GoalsAgainst || 0,
-                    saldo: item.GoalDifference || 0,
-                    ultimosResultados
+
+                    pontos: item.Points ?? 0,
+                    jogos: item.Played ?? 0,
+                    vitorias: item.Won ?? 0,
+                    empates: item.Drawn ?? 0,
+                    derrotas: item.Lost ?? 0,
+
+                    // Campos corretos vindos da FIFA
+                    golsPro: item.For ?? 0,
+                    golsContra: item.Against ?? 0,
+                    saldo: item.GoalsDiference ?? 0,
+
+                    // Últimos resultados vêm do próprio MatchResults
+                    ultimosResultados: montarUltimosResultadosFIFA(item)
                 });
             });
 
@@ -2189,17 +2078,19 @@ app.get('/estatisticas/standings', async (req, res) => {
             estatisticasCache.standings[lang] = respostaFinal;
             estatisticasCache.standings.timestamp[lang] = agora;
 
-            res.status(200).json(respostaFinal);
-        } else {
-            res.status(200).json({
-                success: true,
-                grupos: {},
-                status: 'aguardando_sorteio'
-            });
+            return res.status(200).json(respostaFinal);
         }
+
+        return res.status(200).json({
+            success: true,
+            grupos: {},
+            status: 'aguardando_sorteio'
+        });
+
     } catch (error) {
         console.error('❌ Erro ao extrair classificação da FIFA:', error);
-        res.status(500).json({
+
+        return res.status(500).json({
             success: false,
             error: 'Erro ao extrair classificação da FIFA.'
         });
