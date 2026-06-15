@@ -176,8 +176,9 @@ function formatarTexto(texto) {
 }
 
 function traduzirTime(nomeBR) {
-    let nomeLimpo = formatarTexto(nomeBR);
-    return dicionarioTimes[nomeLimpo] || nomeLimpo; 
+    const nomeLimpo = formatarTexto(nomeBR);
+    const traduzido = dicionarioTimes[nomeLimpo] || nomeLimpo;
+    return formatarTexto(traduzido);
 }
 
 function formatarDataISO(dataString) {
@@ -720,8 +721,8 @@ for (let doc of cartelas) {
         const dataPalpite = formatarDataISO(palpite.data_jogo);
 
         const jogoFinalizado = todosJogosFinalizados.find(j => {
-            const home = formatarTexto(j.homeTeam.name);
-            const away = formatarTexto(j.awayTeam.name);
+            const home = traduzirTime(j.homeTeam.name);
+            const away = traduzirTime(j.awayTeam.name);
 
             // TRAVA DE DATA COM TOLERÂNCIA (± 24h)
             let bateuData = false;
@@ -748,7 +749,7 @@ for (let doc of cartelas) {
         });
 
         if (jogoFinalizado) {
-            const home = formatarTexto(jogoFinalizado.homeTeam.name);
+            const home = traduzirTime(jogoFinalizado.homeTeam.name);
             const ordreExata = (home.includes(time1Ingles) || time1Ingles.includes(home));
 
             let placarReal1 = ordreExata ? jogoFinalizado.score.fullTime.home : jogoFinalizado.score.fullTime.away;
