@@ -1980,40 +1980,37 @@ app.get('/estatisticas/standings', async (req, res) => {
 
         const montarUltimosResultadosFIFA = (item, limite = 5) => {
             const idTime = extrairIdTime(item);
-
+        
             if (!idTime || !Array.isArray(item.MatchResults)) {
                 return ['-', '-', '-', '-', '-'];
             }
-
+        
             const resultados = item.MatchResults
-                // Ignora jogos futuros sem placar
                 .filter(match =>
                     isNumeroValido(match.HomeTeamScore) &&
                     isNumeroValido(match.AwayTeamScore)
                 )
-                // Garante ordem cronológica
                 .sort((a, b) => new Date(a.StartTime) - new Date(b.StartTime))
-                // Pega os últimos jogos finalizados
                 .slice(-limite)
                 .map(match => {
                     const isHome = String(match.HomeTeamId) === idTime;
                     const isAway = String(match.AwayTeamId) === idTime;
-
+        
                     if (!isHome && !isAway) return null;
-
+        
                     const golsTime = Number(isHome ? match.HomeTeamScore : match.AwayTeamScore);
                     const golsAdversario = Number(isHome ? match.AwayTeamScore : match.HomeTeamScore);
-
-                    if (golsTime > golsAdversario) return 'V';
-                    if (golsTime < golsAdversario) return 'D';
-                    return 'E';
+        
+                    if (golsTime > golsAdversario) return 'W';
+                    if (golsTime < golsAdversario) return 'L';
+                    return 'D';
                 })
                 .filter(Boolean);
-
+        
             while (resultados.length < limite) {
                 resultados.push('-');
             }
-
+        
             return resultados.slice(0, limite);
         };
 
