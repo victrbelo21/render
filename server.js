@@ -126,7 +126,7 @@ const dicionarioTimes = {
     "canada": "canada",
     "catar": "qatar",
     "colombia": "colombia",
-    "costa do marfim": "côte d’ivoire", 
+    "costa do marfim": "cote divoire", 
     "croacia": "croatia",
     "curacau": "curacao",
     "egito": "egypt",
@@ -159,7 +159,18 @@ const dicionarioTimes = {
     "tunisia": "tunisia",
     "turquia": "turkey",
     "uruguai": "uruguay",
-    "uzbequistao": "uzbekistan"
+    "uzbequistao": "uzbekistan",
+    "eua": "united states",
+"estados unidos da america": "united states",
+"republica da coreia": "south korea",
+"coreia do sul": "south korea",
+"bosnia e herzeg": "bosnia herzegovina",
+"bosnia herzegovina": "bosnia herzegovina",
+"bosnia and herzegovina": "bosnia herzegovina",
+"cote divoire": "cote divoire",
+"cote d ivoire": "cote divoire",
+"ivory coast": "cote divoire",
+"costa de marfil": "cote divoire"
 };
 
 // =====================================================================
@@ -224,6 +235,146 @@ function formatarDataISO(dataString) {
     
     return dataString;
 }
+
+// =====================================================================
+// CALENDÁRIO OFICIAL DOS JOGOS - TRAVA DE PALPITES PELO SERVIDOR
+// =====================================================================
+// Todos os horários abaixo estão em horário de Brasília (-03:00).
+// O front pode exibir horário local do usuário, mas a trava real do servidor
+// sempre usa este calendário oficial.
+
+const FUSO_OFICIAL_PALPITES = '-03:00';
+const JOGOS_OFICIAIS_POR_CHAVE = new Map();
+
+function criarChaveJogoOficial(time1, time2) {
+    const t1 = traduzirTime(time1);
+    const t2 = traduzirTime(time2);
+    return [t1, t2].sort().join('__');
+}
+
+function registrarJogoOficial(time1, time2, data_jogo, horario, fase = 'grupo') {
+    const chave = criarChaveJogoOficial(time1, time2);
+    const kickoffISO = `${data_jogo}T${horario}:00${FUSO_OFICIAL_PALPITES}`;
+    const kickoffDate = new Date(kickoffISO);
+
+    if (Number.isNaN(kickoffDate.getTime())) {
+        console.warn(`⚠️ Kickoff inválido no calendário oficial: ${time1} x ${time2} | ${kickoffISO}`);
+        return;
+    }
+
+    JOGOS_OFICIAIS_POR_CHAVE.set(chave, {
+        chave,
+        time_1: time1,
+        time_2: time2,
+        data_jogo,
+        horario,
+        fase,
+        kickoffISO,
+        kickoffDate
+    });
+}
+
+function obterJogoOficialDoPalpite(palpite) {
+    if (!palpite) return null;
+    const chave = criarChaveJogoOficial(palpite.time_1, palpite.time_2);
+    return JOGOS_OFICIAIS_POR_CHAVE.get(chave) || null;
+}
+
+// FASE DE GRUPOS
+[
+    ['México', 'África do Sul', '2026-06-11', '16:00'],
+    ['Rep. da Coreia', 'Tchéquia', '2026-06-11', '23:00'],
+
+    ['Canadá', 'Bósnia e Herzegovina', '2026-06-12', '16:00'],
+    ['Estados Unidos', 'Paraguai', '2026-06-12', '22:00'],
+
+    ['Catar', 'Suíça', '2026-06-13', '16:00'],
+    ['Brasil', 'Marrocos', '2026-06-13', '19:00'],
+    ['Haiti', 'Escócia', '2026-06-13', '22:00'],
+
+    ['Austrália', 'Turquia', '2026-06-14', '01:00'],
+    ['Alemanha', 'Curaçau', '2026-06-14', '14:00'],
+    ['Holanda', 'Japão', '2026-06-14', '17:00'],
+    ['Costa do Marfim', 'Equador', '2026-06-14', '20:00'],
+    ['Suécia', 'Tunísia', '2026-06-14', '23:00'],
+
+    ['Espanha', 'Cabo Verde', '2026-06-15', '13:00'],
+    ['Bélgica', 'Egito', '2026-06-15', '16:00'],
+    ['Arábia Saudita', 'Uruguai', '2026-06-15', '19:00'],
+    ['RI do Irã', 'Nova Zelândia', '2026-06-15', '22:00'],
+
+    ['França', 'Senegal', '2026-06-16', '16:00'],
+    ['Iraque', 'Noruega', '2026-06-16', '19:00'],
+    ['Argentina', 'Argélia', '2026-06-16', '22:00'],
+
+    ['Áustria', 'Jordânia', '2026-06-17', '01:00'],
+    ['Portugal', 'RD do Congo', '2026-06-17', '14:00'],
+    ['Inglaterra', 'Croácia', '2026-06-17', '17:00'],
+    ['Gana', 'Panamá', '2026-06-17', '20:00'],
+    ['Uzbequistão', 'Colômbia', '2026-06-17', '23:00'],
+
+    ['Tchéquia', 'África do Sul', '2026-06-18', '13:00'],
+    ['Suíça', 'Bósnia e Herzegovina', '2026-06-18', '16:00'],
+    ['Canadá', 'Catar', '2026-06-18', '19:00'],
+    ['México', 'República da Coreia', '2026-06-18', '22:00'],
+
+    ['Estados Unidos', 'Austrália', '2026-06-19', '16:00'],
+    ['Escócia', 'Marrocos', '2026-06-19', '19:00'],
+    ['Brasil', 'Haiti', '2026-06-19', '21:30'],
+
+    ['Turquia', 'Paraguai', '2026-06-20', '00:00'],
+    ['Holanda', 'Suécia', '2026-06-20', '14:00'],
+    ['Alemanha', 'Costa do Marfim', '2026-06-20', '17:00'],
+    ['Equador', 'Curaçau', '2026-06-20', '21:00'],
+
+    ['Tunísia', 'Japão', '2026-06-21', '01:00'],
+    ['Espanha', 'Arábia Saudita', '2026-06-21', '13:00'],
+    ['Bélgica', 'RI do Irã', '2026-06-21', '16:00'],
+    ['Uruguai', 'Cabo Verde', '2026-06-21', '19:00'],
+    ['Nova Zelândia', 'Egito', '2026-06-21', '22:00'],
+
+    ['Argentina', 'Áustria', '2026-06-22', '14:00'],
+    ['França', 'Iraque', '2026-06-22', '18:00'],
+    ['Noruega', 'Senegal', '2026-06-22', '21:00'],
+
+    ['Jordânia', 'Argélia', '2026-06-23', '00:00'],
+    ['Portugal', 'Uzbequistão', '2026-06-23', '14:00'],
+    ['Inglaterra', 'Gana', '2026-06-23', '17:00'],
+    ['Panamá', 'Croácia', '2026-06-23', '20:00'],
+    ['Colômbia', 'RD do Congo', '2026-06-23', '23:00'],
+
+    ['Suíça', 'Canadá', '2026-06-24', '16:00'],
+    ['Bósnia e Herzegovina', 'Catar', '2026-06-24', '16:00'],
+    ['Escócia', 'Brasil', '2026-06-24', '19:00'],
+    ['Marrocos', 'Haiti', '2026-06-24', '19:00'],
+    ['Tchéquia', 'México', '2026-06-24', '22:00'],
+    ['África do Sul', 'República da Coreia', '2026-06-24', '22:00'],
+
+    ['Curaçau', 'Costa do Marfim', '2026-06-25', '17:00'],
+    ['Equador', 'Alemanha', '2026-06-25', '17:00'],
+    ['Japão', 'Suécia', '2026-06-25', '20:00'],
+    ['Tunísia', 'Holanda', '2026-06-25', '20:00'],
+    ['Turquia', 'Estados Unidos', '2026-06-25', '23:00'],
+    ['Paraguai', 'Austrália', '2026-06-25', '23:00'],
+
+    ['Noruega', 'França', '2026-06-26', '16:00'],
+    ['Senegal', 'Iraque', '2026-06-26', '16:00'],
+    ['Cabo Verde', 'Arábia Saudita', '2026-06-26', '21:00'],
+    ['Uruguai', 'Espanha', '2026-06-26', '21:00'],
+
+    ['Egito', 'RI do Irã', '2026-06-27', '00:00'],
+    ['Nova Zelândia', 'Bélgica', '2026-06-27', '00:00'],
+    ['Panamá', 'Inglaterra', '2026-06-27', '18:00'],
+    ['Croácia', 'Gana', '2026-06-27', '18:00'],
+    ['Colômbia', 'Portugal', '2026-06-27', '20:30'],
+    ['RD do Congo', 'Uzbequistão', '2026-06-27', '20:30'],
+    ['Argélia', 'Áustria', '2026-06-27', '23:00'],
+    ['Jordânia', 'Argentina', '2026-06-27', '23:00']
+].forEach(([time1, time2, data, hora]) => {
+    registrarJogoOficial(time1, time2, data, hora, 'grupo');
+});
+
+console.log(`🕒 Calendário oficial de trava carregado: ${JOGOS_OFICIAIS_POR_CHAVE.size} jogos.`);
 
 // =====================================================================
 // 2. SISTEMAS AUTOMATIZADOS (CRON JOBS)
@@ -1110,11 +1261,13 @@ app.get('/noticias', async (req, res) => {
 
 app.post('/salvar-lote', async (req, res) => {
   try {
-    const { user_email, user_name, palpites } = req.body;
+    const { user_email, user_name, palpites, lang } = req.body;
 
-    const { lang } = req.body;
-    if (!user_email || !palpites) {
-        return res.status(400).json({ success: false, error: getMsg('invalid_data', lang) });
+    if (!user_email || !Array.isArray(palpites)) {
+        return res.status(400).json({
+            success: false,
+            error: getMsg('invalid_data', lang)
+        });
     }
 
     const searchResponse = await cloudant.postFind({
@@ -1126,45 +1279,106 @@ app.post('/salvar-lote', async (req, res) => {
     });
 
     const existingDoc = searchResponse.result.docs[0];
-    
+
     // =================================================================
-    // 🛡️ MURALHA DE SEGURANÇA (ANTI-FRAUDE DE HORÁRIO ADAPTÁVEL)
+    // TRAVA OFICIAL PELO SERVIDOR
     // =================================================================
-    const agoraServidor = new Date(); 
-    
-    const palpitesFinais = existingDoc && existingDoc.palpites_jogos ? [...existingDoc.palpites_jogos] : [];
+    // O servidor NÃO confia mais em data_jogo/horario enviados pelo front.
+    // Ele identifica o jogo pelos times e usa o calendário oficial em BRT.
+    // =================================================================
+
+    const agoraServidor = new Date();
+
+    const palpitesFinais = existingDoc && Array.isArray(existingDoc.palpites_jogos)
+      ? [...existingDoc.palpites_jogos]
+      : [];
+
     let modificacoesValidas = 0;
+    const palpitesNaoReconhecidos = [];
+    const palpitesBloqueados = [];
 
     palpites.forEach(palpite_recebido => {
-        const matchHora = palpite_recebido.horario.match(/(\d{2}):(\d{2})/);
-        
-        if (palpite_recebido.data_jogo && matchHora) {
-            const dataJogoStr = `${palpite_recebido.data_jogo}T${matchHora[1]}:${matchHora[2]}:00-03:00`;
-            const dataOficialJogo = new Date(dataJogoStr);
-            
-            const difMs = dataOficialJogo - agoraServidor;
-            const difHoras = difMs / (1000 * 60 * 60);
+        const jogoOficial = obterJogoOficialDoPalpite(palpite_recebido);
+        const descricao = `${palpite_recebido.time_1 || '?'} x ${palpite_recebido.time_2 || '?'}`;
 
-            const indexExistente = palpitesFinais.findIndex(p => 
-                p.time_1 === palpite_recebido.time_1 && p.time_2 === palpite_recebido.time_2
+        if (!jogoOficial || !jogoOficial.kickoffDate || Number.isNaN(jogoOficial.kickoffDate.getTime())) {
+            palpitesNaoReconhecidos.push(descricao);
+
+            console.warn(
+                `[PALPITE_NAO_RECONHECIDO] email=${user_email} jogo="${descricao}". ` +
+                `Palpite ignorado para evitar erro de trava por fuso horário.`
             );
 
-            // A regra de 2h agora é absoluta baseada no fuso de Brasília vindo do HTML
-            if (difHoras > 2) {
-                if (indexExistente > -1) {
-                    palpitesFinais[indexExistente] = palpite_recebido;
-                } else {
-                    palpitesFinais.push(palpite_recebido);
-                }
-                modificacoesValidas++;
-            } else {
-                console.log(`🚨 BLOQUEADO: ${user_email} tentou enviar/alterar o jogo ${palpite_recebido.time_1} x ${palpite_recebido.time_2} com menos de 2h de antecedência.`);
-            }
+            return;
         }
+
+        const difMs = jogoOficial.kickoffDate - agoraServidor;
+        const difHoras = difMs / (1000 * 60 * 60);
+        const chaveOficial = jogoOficial.chave;
+
+        const indexExistente = palpitesFinais.findIndex(p =>
+            criarChaveJogoOficial(p.time_1, p.time_2) === chaveOficial
+        );
+
+        const palpiteExistente = indexExistente > -1 ? palpitesFinais[indexExistente] : null;
+
+        const mesmoPalpiteJaSalvo =
+            palpiteExistente &&
+            Number(palpiteExistente.placar_1) === Number(palpite_recebido.placar_1) &&
+            Number(palpiteExistente.placar_2) === Number(palpite_recebido.placar_2);
+
+        // Importante:
+        // O seu front envia também palpites antigos/read-only no lote.
+        // Se o palpite já existia e está igual, não consideramos tentativa de alteração.
+        if (mesmoPalpiteJaSalvo && difHoras <= 2) {
+            return;
+        }
+
+        const palpitePadronizado = {
+            ...palpite_recebido,
+
+            // Mantemos times e placares vindos do front,
+            // mas padronizamos data/hora oficiais do jogo em BRT.
+            data_jogo: jogoOficial.data_jogo,
+            horario: jogoOficial.horario
+        };
+
+        if (difHoras > 2) {
+            if (indexExistente > -1) {
+                palpitesFinais[indexExistente] = palpitePadronizado;
+            } else {
+                palpitesFinais.push(palpitePadronizado);
+            }
+
+            modificacoesValidas++;
+            return;
+        }
+
+        palpitesBloqueados.push(descricao);
+
+        console.log(
+            `[PALPITE_BLOQUEADO] email=${user_email} jogo="${descricao}" ` +
+            `kickoff="${jogoOficial.kickoffISO}" difHoras=${difHoras.toFixed(2)}`
+        );
     });
 
+    if (modificacoesValidas === 0 && palpitesNaoReconhecidos.length === palpites.length) {
+        return res.status(400).json({
+            success: false,
+            error:
+                'Não consegui reconhecer os jogos enviados no calendário oficial. ' +
+                'Nenhum palpite foi salvo para evitar erro de trava por fuso horário.',
+            jogos_nao_reconhecidos: palpitesNaoReconhecidos
+        });
+    }
+
     if (modificacoesValidas === 0 && palpites.length > 0) {
-        return res.status(400).json({ success: false, error: getMsg('deadline_expired', lang) });
+        return res.status(400).json({
+            success: false,
+            error: getMsg('deadline_expired', lang),
+            jogos_bloqueados: palpitesBloqueados,
+            jogos_nao_reconhecidos: palpitesNaoReconhecidos
+        });
     }
 
     if (existingDoc) {
@@ -1172,24 +1386,51 @@ app.post('/salvar-lote', async (req, res) => {
       existingDoc.user_name = user_name;
       existingDoc.timestamp = agoraServidor.toISOString();
 
-      await cloudant.putDocument({ db: DB_NAME, docId: existingDoc._id, document: existingDoc });
-      res.status(200).json({ success: true, message: "Cartela updated" });
-    } else {
-      const novoDocumento = {
-        type: "cartela_usuario",
-        user_email, 
-        user_name, 
-        palpites_jogos: palpitesFinais,
-        pontos_acumulados: 0,
-        palpite_final: null,
-        timestamp: agoraServidor.toISOString()
-      };
-      await cloudant.postDocument({ db: DB_NAME, document: novoDocumento });
-      res.status(200).json({ success: true, message: "Cartela criada" });
+      await cloudant.putDocument({
+        db: DB_NAME,
+        docId: existingDoc._id,
+        document: existingDoc
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Cartela updated",
+        modificacoes_validas: modificacoesValidas,
+        jogos_bloqueados: palpitesBloqueados,
+        jogos_nao_reconhecidos: palpitesNaoReconhecidos
+      });
     }
+
+    const novoDocumento = {
+      type: "cartela_usuario",
+      user_email,
+      user_name,
+      palpites_jogos: palpitesFinais,
+      pontos_acumulados: 0,
+      palpite_final: null,
+      timestamp: agoraServidor.toISOString()
+    };
+
+    await cloudant.postDocument({
+      db: DB_NAME,
+      document: novoDocumento
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Cartela criada",
+      modificacoes_validas: modificacoesValidas,
+      jogos_bloqueados: palpitesBloqueados,
+      jogos_nao_reconhecidos: palpitesNaoReconhecidos
+    });
+
   } catch (error) {
     console.error("Erro /salvar-lote:", error);
-    res.status(500).json({ success: false, error: 'Erro ao processar lote' });
+
+    return res.status(500).json({
+        success: false,
+        error: 'Erro ao processar lote'
+    });
   }
 });
 
