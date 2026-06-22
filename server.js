@@ -393,6 +393,399 @@ cron.schedule('*/14 * * * *', async () => {
     }
 });
 
+// =====================================================================
+// FIX TEMPORÁRIO LOCALIZADO - ESPANHA 4 x 0 ARÁBIA SAUDITA
+// REMOVER ESTE BLOCO APÓS CONFIRMAR A CORREÇÃO
+// =====================================================================
+
+const FIX_ESP_SAU_4X0_ENABLED = process.env.FIX_ESP_SAU_4X0_ENABLED === 'true';
+const FIX_ESP_SAU_4X0_DRY_RUN = process.env.FIX_ESP_SAU_4X0_DRY_RUN === 'true';
+
+let fixEspSau4x0EmExecucao = false;
+let fixEspSau4x0ExecutadoNestaInstancia = false;
+
+const fixEspSau4x0Task = cron.schedule('*/5 * * * *', async () => {
+    if (!FIX_ESP_SAU_4X0_ENABLED) return;
+
+    if (fixEspSau4x0ExecutadoNestaInstancia) {
+        console.log('✅ [FIX ESP-SAU] Já executado nesta instância. Parando task temporária.');
+        fixEspSau4x0Task.stop();
+        return;
+    }
+
+    if (fixEspSau4x0EmExecucao) {
+        console.log('⏳ [FIX ESP-SAU] Correção já está em execução. Ignorando esta rodada.');
+        return;
+    }
+
+    fixEspSau4x0EmExecucao = true;
+
+    try {
+        console.log('🛠️ [FIX ESP-SAU] Iniciando correção localizada Espanha 4 x 0 Arábia Saudita...');
+        console.log(`🧪 [FIX ESP-SAU] DRY_RUN=${FIX_ESP_SAU_4X0_DRY_RUN}`);
+
+        const aguardar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        const executarComRetry = async (operacao, contexto, tentativas = 5, pausaInicialMs = 1500) => {
+            for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
+                try {
+                    return await operacao();
+                } catch (error) {
+                    const status = error?.status || error?.statusCode || error?.code || error?.response?.status;
+                    const erroTransitorio =
+                        [429, 500, 502, 503, 504].includes(Number(status)) ||
+                        ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN'].includes(error?.code);
+
+                    if (!erroTransitorio || tentativa === tentativas) {
+                        console.error(`❌ [FIX ESP-SAU] Falha definitiva em ${contexto}:`, error.message || error);
+                        throw error;
+                    }
+
+                    const pausaMs = pausaInicialMs * tentativa;
+
+                    console.warn(
+                        `⚠️ [FIX ESP-SAU] ${contexto}: erro transitório ${status || error?.code}. ` +
+                        `Tentativa ${tentativa}/${tentativas}. Aguardando ${pausaMs}ms...`
+                    );
+
+                    await aguardar(pausaMs);
+                }
+            }
+        };
+
+        const calcularPontosFix = (palpite1, palpite2, real1, real2) => {
+            let pontosGanhos = 0;
+
+            const vencedorReal = real1 > real2 ? 1 : (real1 < real2 ? 2 : 0);
+            const vencedorPalpite = palpite1 > palpite2 ? 1 : (palpite1 < palpite2 ? 2 : 0);
+
+            const diffReal = real1 - real2;
+            const diffPalpite = palpite1 - palpite2;
+
+            const acertouVencedor = vencedorReal === vencedorPalpite;
+            const acertouUmPlacar = palpite1 === real1 || palpite2 === real2;
+            const acertouDiferenca = diffReal === diffPalpite;
+            const acertouPlacarExato = palpite1 === real1 && palpite2 === real2;
+
+            if (acertouPlacarExato) {
+                pontosGanhos = 10;
+            } else if (acertouVencedor) {
+                if (acertouDiferenca) {
+                    pontosGanhos = 7;
+                } else if (acertouUmPlacar) {
+                    pontosGanhos = 5;
+                } else {
+                    pontosGanhos = 3;
+                }
+            }
+
+            return pontosGanhos;
+        };
+
+        const ehJogoEspanhaArabia = (palpite) => {
+            if (!palpite) return false;
+
+            const time1 = traduzirTime(palpite.time_1);
+            const time2 = traduzirTime(palpite.time_2);
+            const data = formatarDataISO(palpite.data_jogo);
+
+            const mesmoJogo =
+                [time1, time2].sort().join('__') === ['spain', 'saudi arabia'].sort().join('__');
+
+            return mesmoJogo && data === '2026-06-21';
+        };
+
+        const aplicarCorrecaoLocalizadaNaCartela = (doc) => {
+            if (!Array.isArray(doc.palpites_jogos)) {
+                return {
+                    encontrou: 0,
+                    alterou: false
+                };
+            }
+
+            let encontrou = 0;
+            let alterou = false;
+
+            doc.palpites_jogos.forEach(palpite => {
+                if (!ehJogoEspanhaArabia(palpite)) return;
+
+                encontrou++;
+
+                const time1 = traduzirTime(palpite.time_1);
+                const time2 = traduzirTime(palpite.time_2);
+
+                const ordemNormal = time1 === 'spain' && time2 === 'saudi arabia';
+
+                const placarReal1 = ordemNormal ? 4 : 0;
+                const placarReal2 = ordemNormal ? 0 : 4;
+
+                const pontosGanhos = calcularPontosFix(
+                    Number(palpite.placar_1),
+                    Number(palpite.placar_2),
+                    placarReal1,
+                    placarReal2
+                );
+
+                const precisaAlterar =
+                    palpite.placar_oficial_1 !== placarReal1 ||
+                    palpite.placar_oficial_2 !== placarReal2 ||
+                    palpite.pontos_obtidos !== pontosGanhos;
+
+                if (precisaAlterar) {
+                    palpite.placar_oficial_1 = placarReal1;
+                    palpite.placar_oficial_2 = placarReal2;
+                    palpite.pontos_obtidos = pontosGanhos;
+                    alterou = true;
+                }
+            });
+
+            if (alterou) {
+                doc.pontos_acumulados = doc.palpites_jogos.reduce(
+                    (total, p) => total + (Number(p.pontos_obtidos) || 0),
+                    0
+                );
+
+                doc.timestamp_fix_esp_sau_4x0 = new Date().toISOString();
+            }
+
+            return {
+                encontrou,
+                alterou
+            };
+        };
+
+        const buscarCartelasEmLotesFix = async (limiteTotal = 3000, tamanhoLote = 150, pausaMs = 1000) => {
+            const cartelas = [];
+            let bookmark = null;
+            let numeroLote = 1;
+
+            while (cartelas.length < limiteTotal) {
+                const restante = limiteTotal - cartelas.length;
+                const limiteDoLote = Math.min(tamanhoLote, restante);
+
+                const params = {
+                    db: DB_NAME,
+                    selector: { type: { "$eq": "cartela_usuario" } },
+                    limit: limiteDoLote
+                };
+
+                if (bookmark) {
+                    params.bookmark = bookmark;
+                }
+
+                console.log(
+                    `📖 [FIX ESP-SAU] Lendo lote ${numeroLote} de cartelas ` +
+                    `(${cartelas.length}/${limiteTotal} carregadas até agora)...`
+                );
+
+                const response = await executarComRetry(
+                    () => cloudant.postFind(params),
+                    `[FIX ESP-SAU] Leitura de cartelas - lote ${numeroLote}`,
+                    5,
+                    1500
+                );
+
+                const docs = response.result.docs || [];
+
+                if (docs.length === 0) {
+                    console.log('✅ [FIX ESP-SAU] Leitura finalizada: nenhum documento novo retornado.');
+                    break;
+                }
+
+                cartelas.push(...docs);
+                bookmark = response.result.bookmark;
+
+                console.log(
+                    `✅ [FIX ESP-SAU] Lote ${numeroLote} lido com ${docs.length} cartela(s). ` +
+                    `Total carregado: ${cartelas.length}/${limiteTotal}`
+                );
+
+                if (cartelas.length >= limiteTotal) {
+                    console.log(`🏁 [FIX ESP-SAU] Limite máximo de ${limiteTotal} cartelas atingido.`);
+                    break;
+                }
+
+                if (docs.length < limiteDoLote) {
+                    console.log('🏁 [FIX ESP-SAU] Todas as cartelas disponíveis foram carregadas.');
+                    break;
+                }
+
+                await aguardar(pausaMs);
+                numeroLote++;
+            }
+
+            return cartelas;
+        };
+
+        const resolverConflitosDoLoteFix = async (falhas, lote, numeroLote) => {
+            for (const falha of falhas) {
+                if (falha.error !== 'conflict') {
+                    throw new Error(
+                        `[FIX ESP-SAU] Falha não recuperável no lote ${numeroLote}: ` +
+                        `${falha.id} - ${falha.error} - ${falha.reason}`
+                    );
+                }
+
+                const docCalculado = lote.find(doc => doc._id === falha.id);
+
+                if (!docCalculado) {
+                    console.warn(`[FIX ESP-SAU] Conflict no lote ${numeroLote}, mas doc não encontrado no lote: ${falha.id}`);
+                    continue;
+                }
+
+                console.warn(
+                    `⚠️ [FIX ESP-SAU] Conflict detectado em ${falha.id}. ` +
+                    `Buscando _rev atual e aplicando somente a correção localizada.`
+                );
+
+                try {
+                    const docAtual = (await executarComRetry(
+                        () => cloudant.getDocument({
+                            db: DB_NAME,
+                            docId: falha.id
+                        }),
+                        `[FIX ESP-SAU] Buscar documento atualizado após conflict - ${falha.id}`,
+                        5,
+                        1500
+                    )).result;
+
+                    if (docAtual.type !== 'cartela_usuario') {
+                        console.warn(`[FIX ESP-SAU] Documento ${falha.id} não é cartela_usuario. Não vou sobrescrever.`);
+                        continue;
+                    }
+
+                    const resultadoMerge = aplicarCorrecaoLocalizadaNaCartela(docAtual);
+
+                    if (!resultadoMerge.alterou) {
+                        console.log(`[FIX ESP-SAU] Documento ${falha.id} já estava correto após conflict. Nada a salvar.`);
+                        continue;
+                    }
+
+                    await executarComRetry(
+                        () => cloudant.putDocument({
+                            db: DB_NAME,
+                            docId: docAtual._id,
+                            document: docAtual
+                        }),
+                        `[FIX ESP-SAU] Salvar documento recuperado após conflict - ${falha.id}`,
+                        5,
+                        1500
+                    );
+
+                    console.log(`✅ [FIX ESP-SAU] Conflict recuperado e documento salvo: ${falha.id}`);
+
+                } catch (error) {
+                    console.error(
+                        `❌ [FIX ESP-SAU] Não consegui recuperar conflict do documento ${falha.id}. ` +
+                        `Vou continuar para não interromper a correção localizada.`,
+                        error.message || error
+                    );
+                }
+            }
+        };
+
+        const salvarDocumentosEmLotesFix = async (documentos, tamanhoLote = 8, pausaMs = 1200) => {
+            let totalSalvosDireto = 0;
+            let totalConflitos = 0;
+
+            for (let i = 0; i < documentos.length; i += tamanhoLote) {
+                const lote = documentos.slice(i, i + tamanhoLote);
+                const numeroLote = Math.floor(i / tamanhoLote) + 1;
+                const totalLotes = Math.ceil(documentos.length / tamanhoLote);
+
+                console.log(`💾 [FIX ESP-SAU] Salvando lote ${numeroLote}/${totalLotes} com ${lote.length} documento(s)...`);
+
+                const response = await executarComRetry(
+                    () => cloudant.postBulkDocs({
+                        db: DB_NAME,
+                        bulkDocs: { docs: lote }
+                    }),
+                    `[FIX ESP-SAU] Salvamento bulkDocs - lote ${numeroLote}`,
+                    5,
+                    1500
+                );
+
+                const resultados = response.result || [];
+                const falhas = resultados.filter(item => item.error);
+                const sucessos = resultados.filter(item => !item.error);
+
+                totalSalvosDireto += sucessos.length;
+
+                if (falhas.length > 0) {
+                    totalConflitos += falhas.filter(item => item.error === 'conflict').length;
+
+                    console.error(`⚠️ [FIX ESP-SAU] ${falhas.length} documento(s) falharam no lote ${numeroLote}:`, falhas);
+
+                    await resolverConflitosDoLoteFix(falhas, lote, numeroLote);
+                }
+
+                if (i + tamanhoLote < documentos.length) {
+                    await aguardar(pausaMs);
+                }
+            }
+
+            console.log(
+                `✅ [FIX ESP-SAU] Salvamento em lotes finalizado. ` +
+                `${totalSalvosDireto} documento(s) salvos direto. ` +
+                `${totalConflitos} conflict(s) tratados.`
+            );
+        };
+
+        const cartelas = await buscarCartelasEmLotesFix(3000, 150, 1000);
+
+        const documentosParaAtualizar = [];
+        let totalPalpitesEncontrados = 0;
+        let totalCartelasComJogo = 0;
+
+        cartelas.forEach(doc => {
+            const resultado = aplicarCorrecaoLocalizadaNaCartela(doc);
+
+            if (resultado.encontrou > 0) {
+                totalCartelasComJogo++;
+                totalPalpitesEncontrados += resultado.encontrou;
+            }
+
+            if (resultado.alterou) {
+                documentosParaAtualizar.push(doc);
+            }
+        });
+
+        console.log('📊 [FIX ESP-SAU] Resumo da correção localizada:');
+        console.log(`- Cartelas lidas: ${cartelas.length}`);
+        console.log(`- Cartelas com Espanha x Arábia Saudita: ${totalCartelasComJogo}`);
+        console.log(`- Palpites encontrados para o jogo: ${totalPalpitesEncontrados}`);
+        console.log(`- Cartelas que precisam gravação: ${documentosParaAtualizar.length}`);
+
+        if (FIX_ESP_SAU_4X0_DRY_RUN) {
+            console.log('🧪 [FIX ESP-SAU] DRY RUN ativo. Nenhum documento foi salvo.');
+            fixEspSau4x0ExecutadoNestaInstancia = true;
+            fixEspSau4x0Task.stop();
+            return;
+        }
+
+        if (documentosParaAtualizar.length > 0) {
+            await salvarDocumentosEmLotesFix(documentosParaAtualizar, 8, 1200);
+
+            rankingCache = { pontos: null, recorde: null };
+            ultimaAtualizacaoCache = 0;
+
+            console.log('🏆 [FIX ESP-SAU] Cache do ranking invalidado.');
+        } else {
+            console.log('✅ [FIX ESP-SAU] Nada para corrigir. Nenhuma cartela foi salva.');
+        }
+
+        fixEspSau4x0ExecutadoNestaInstancia = true;
+        fixEspSau4x0Task.stop();
+
+        console.log('✅ [FIX ESP-SAU] Correção localizada finalizada. REMOVA ESTE BLOCO DO server.js.');
+
+    } catch (error) {
+        console.error('❌ [FIX ESP-SAU] Erro na correção localizada:', error);
+    } finally {
+        fixEspSau4x0EmExecucao = false;
+    }
+});
+
 // TRABALHADOR INVISÍVEL - Recálculo Contínuo de Resultados
 cron.schedule('*/30 * * * *', async () => {
     console.log('⚽ Verificando novos resultados da Copa...');
